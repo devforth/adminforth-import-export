@@ -6,7 +6,6 @@
   "type": "module",
   "scripts": {
     "build": "tsc && rsync -av --exclude 'node_modules' custom dist/ && npm version patch",
-    "rollout": "npm run build && npm version patch && npm publish --access public",
     "prepare": "npm link adminforth"
   },
   "repository": {
