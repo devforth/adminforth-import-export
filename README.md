@@ -4,4 +4,4 @@
 
 Allows to add import/export to csv options to an adminforth table.
 
-## For ussage, see [AdminForth ImportExport Documentation](https://adminforth.dev/docs/tutorial/Plugins/import-export/)
+## For usage, see [AdminForth ImportExport Documentation](https://adminforth.dev/docs/tutorial/Plugins/import-export/)
