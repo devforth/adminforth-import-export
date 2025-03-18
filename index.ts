@@ -85,20 +85,26 @@ export default class ImportExport extends AdminForthPlugin {
         });
 
         // csv export
-
         const columns = this.resourceConfig.columns.filter((col) => !col.virtual);
+        
+        const escapeCSV = (value: any) => {
+          if (value === null || value === undefined) return '""';
+          const str = String(value);
+          if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+            return `"${str.replace(/"/g, '""')}"`;
+          }
+          return `"${str}"`;
+        };
+
         let csv = data.data.map((row) => {
-          return columns.map((col) => {
-            return row[col.name];
-          }).join(',');
+          return columns.map((col) => escapeCSV(row[col.name])).join(',');
         }).join('\n');
 
         // add headers
-        const headers = columns.map((col) => col.name).join(',');
+        const headers = columns.map((col) => escapeCSV(col.name)).join(',');
         csv = `${headers}\n${csv}`;
 
         return { data: csv, exportedCount: data.total, ok: true };
-
       }
     });
 

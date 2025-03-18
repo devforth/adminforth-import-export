@@ -12,6 +12,7 @@
 import { ref, Ref } from 'vue';
 import { callAdminForthApi } from '@/utils';
 import adminforth from '@/adminforth';
+import Papa from 'papaparse';
 
 const inProgress: Ref<boolean> = ref(false);
 
@@ -63,32 +64,43 @@ async function importCsv() {
       return;
     }
 
-    // post data in format, plain json 
-    // data is in format {[columnName]: [value1, value2, value3...], [columnName2]: [value1, value2, value3...]}
-    const data = {};
     const reader = new FileReader();
     reader.onload = async (e) => {
-      const text = e.target.result as string;
+      try {
+        const text = e.target.result as string;
+        
+        Papa.parse(text, {
+          header: true,
+          skipEmptyLines: true,
+          complete: async (results) => {
+            if (results.errors.length > 0) {
+              throw new Error(`CSV parsing errors: ${results.errors.map(e => e.message).join(', ')}`);
+            }
+            const data: Record<string, string[]> = {};
+            const rows = results.data as Record<string, string>[];
+            
+            if (rows.length === 0) {
+              throw new Error('No data rows found in CSV');
+            }
+            Object.keys(rows[0]).forEach(column => {
+              data[column] = rows.map(row => row[column]);
+            });
 
-      const lines = text.split('\n');
-      const columns = lines[0].split(',');
-      for (let i = 1; i < lines.length; i++) {
-        const values = lines[i].split(',');
-        for (let j = 0; j < columns.length; j++) {
-          if (!data[columns[j]]) {
-            data[columns[j]] = [];
+            await postData(data);
+          },
+          error: (error) => {
+            throw new Error(`Failed to parse CSV: ${error.message}`);
           }
-          data[columns[j]].push(values[j]);
-        }
+        });
+      } catch (error) {
+        inProgress.value = false;
+        adminforth.alert({
+          message: `Error processing CSV: ${error.message}`,
+          variant: 'danger'
+        });
       }
-      await postData(data);
     };
     reader.readAsText(file);
-
-
-    
   };
-
 }
-
 </script>
