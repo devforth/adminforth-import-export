@@ -1,4 +1,4 @@
-import { AdminForthPlugin, suggestIfTypo, AdminForthFilterOperators } from "adminforth";
+import { AdminForthPlugin, suggestIfTypo, AdminForthFilterOperators, Filters } from "adminforth";
 import type { IAdminForth, IHttpServer, AdminForthResourceColumn, AdminForthComponentDeclaration, AdminForthResource } from "adminforth";
 import type { PluginOptions } from './types.js';
 
@@ -114,8 +114,6 @@ export default class ImportExport extends AdminForthPlugin {
       noAuth: true,
       handler: async ({ body }) => {
         const { data } = body;
-        // data is in format {[columnName]: [value1, value2, value3...], [columnName2]: [value1, value2, value3...]}
-        // we need to convert it to [{columnName: value1, columnName2: value1}, {columnName: value2, columnName2: value2}...]
         const rows = [];
         const columns = Object.keys(data);
 
@@ -143,21 +141,133 @@ export default class ImportExport extends AdminForthPlugin {
         }
 
         let importedCount = 0;
+        let updatedCount = 0;
+        const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
+
         await Promise.all(rows.map(async (row) => {
           try {
-              await this.adminforth.resource(this.resourceConfig.resourceId).create(row);
-              importedCount++;
+            if (primaryKeyColumn && row[primaryKeyColumn.name]) {
+              const existingRecord = await this.adminforth.resource(this.resourceConfig.resourceId)
+                .list([Filters.EQ(primaryKeyColumn.name, row[primaryKeyColumn.name])]);
+              
+              if (existingRecord.length > 0) {
+                await this.adminforth.resource(this.resourceConfig.resourceId)
+                  .update(row[primaryKeyColumn.name], row);
+                updatedCount++;
+                return;
+              }
+            }
+            await this.adminforth.resource(this.resourceConfig.resourceId).create(row);
+            importedCount++;
           } catch (e) {
-              errors.push(e.message);
+            errors.push(e.message);
           }
         }));
 
-
-        return { ok: true, importedCount, errors};
-
+        return { ok: true, importedCount, updatedCount, errors };
       }
     });
 
+    server.endpoint({
+      method: 'POST',
+      path: `/plugin/${this.pluginInstanceId}/import-csv-new-only`,
+      noAuth: true,
+      handler: async ({ body }) => {
+        const { data } = body;
+        const rows = [];
+        const columns = Object.keys(data);
+
+        // check column names are valid
+        const errors: string[] = [];
+        columns.forEach((col) => {
+          if (!this.resourceConfig.columns.some((c) => c.name === col)) {
+            const similar = suggestIfTypo(this.resourceConfig.columns.map((c) => c.name), col);
+            errors.push(`Column '${col}' defined in CSV not found in resource '${this.resourceConfig.resourceId}'. ${
+              similar ? `If you mean '${similar}', rename it in CSV` : 'If column is in database but not in resource configuration, add it with showIn:[]'}`
+            );
+          }
+        });
+        if (errors.length > 0) {
+          return { ok: false, errors };
+        }
+
+        const columnValues: any[] = Object.values(data);
+        for (let i = 0; i < columnValues[0].length; i++) {
+          const row = {};
+          for (let j = 0; j < columns.length; j++) {
+            row[columns[j]] = columnValues[j][i];
+          }
+          rows.push(row);
+        }
+
+        let importedCount = 0;
+        const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
+
+        await Promise.all(rows.map(async (row) => {
+          try {
+            if (primaryKeyColumn && row[primaryKeyColumn.name]) {
+              const existingRecord = await this.adminforth.resource(this.resourceConfig.resourceId)
+                .list([Filters.EQ(primaryKeyColumn.name, row[primaryKeyColumn.name])]);
+              
+              if (existingRecord.length > 0) {
+                return;
+              }
+            }
+            await this.adminforth.resource(this.resourceConfig.resourceId).create(row);
+            importedCount++;
+          } catch (e) {
+            errors.push(e.message);
+          }
+        }));
+
+        return { ok: true, importedCount, errors };
+      }
+    });
+
+    server.endpoint({
+      method: 'POST',
+      path: `/plugin/${this.pluginInstanceId}/check-records`,
+      noAuth: true,
+      handler: async ({ body }) => {
+        const { data } = body;
+
+        const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
+        if (!primaryKeyColumn) {
+          return {
+            ok: true,
+            total: Object.values(data)[0].length,
+            existingCount: 0,
+            newCount: Object.values(data)[0].length
+          };
+        }
+
+        const rows = [];
+        const columns = Object.keys(data);
+        const columnValues = Object.values(data);
+        for (let i = 0; i < columnValues[0].length; i++) {
+          const row = {};
+          for (let j = 0; j < columns.length; j++) {
+            row[columns[j]] = columnValues[j][i];
+          }
+          rows.push(row);
+        }
+
+        const primaryKeys = rows
+          .map(row => row[primaryKeyColumn.name])
+          .filter(key => key !== undefined && key !== null && key !== '');
+
+        const records = await this.adminforth.resource(this.resourceConfig.resourceId).list([])
+
+        const existingRecords = records.filter((record) => primaryKeys.includes(record[primaryKeyColumn.name]));
+
+        return {
+          ok: true,
+          total: rows.length,
+          existingCount: existingRecords.length,
+          newCount: rows.length - existingRecords.length
+        };
+      }
+    });
   }
 
 }
