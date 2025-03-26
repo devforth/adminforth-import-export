@@ -132,12 +132,6 @@ export default class ImportExport extends AdminForthPlugin {
         }
 
         const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
-        if (!primaryKeyColumn) {
-          return { 
-            ok: false, 
-            errors: ['Resource has no primary key column'] 
-          };
-        }
 
         const columnValues: any[] = Object.values(data);
         for (let i = 0; i < columnValues[0].length; i++) {
@@ -199,13 +193,6 @@ export default class ImportExport extends AdminForthPlugin {
         }
 
         const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
-        if (!primaryKeyColumn) {
-          return { 
-            ok: false, 
-            errors: ['Resource has no primary key column'] 
-          };
-        }
-
         const columnValues: any[] = Object.values(data);
         for (let i = 0; i < columnValues[0].length; i++) {
           const row = {};
@@ -246,13 +233,6 @@ export default class ImportExport extends AdminForthPlugin {
         const { data } = body;
 
         const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
-
-        if (!primaryKeyColumn) {
-          return {
-            ok: false,
-            error: {message: 'Resource has no primary key column'},
-          };
-        }
 
         const rows = [];
         const columns = Object.keys(data);
