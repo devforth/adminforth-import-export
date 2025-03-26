@@ -131,6 +131,8 @@ export default class ImportExport extends AdminForthPlugin {
           return { ok: false, errors };
         }
 
+        const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
+
         const columnValues: any[] = Object.values(data);
         for (let i = 0; i < columnValues[0].length; i++) {
           const row = {};
@@ -142,7 +144,6 @@ export default class ImportExport extends AdminForthPlugin {
 
         let importedCount = 0;
         let updatedCount = 0;
-        const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
 
         await Promise.all(rows.map(async (row) => {
           try {
@@ -191,6 +192,7 @@ export default class ImportExport extends AdminForthPlugin {
           return { ok: false, errors };
         }
 
+        const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
         const columnValues: any[] = Object.values(data);
         for (let i = 0; i < columnValues[0].length; i++) {
           const row = {};
@@ -201,7 +203,6 @@ export default class ImportExport extends AdminForthPlugin {
         }
 
         let importedCount = 0;
-        const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
 
         await Promise.all(rows.map(async (row) => {
           try {
@@ -232,19 +233,11 @@ export default class ImportExport extends AdminForthPlugin {
         const { data } = body;
 
         const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
-        if (!primaryKeyColumn) {
-          return {
-            ok: true,
-            total: Object.values(data)[0].length,
-            existingCount: 0,
-            newCount: Object.values(data)[0].length
-          };
-        }
 
         const rows = [];
         const columns = Object.keys(data);
         const columnValues = Object.values(data);
-        for (let i = 0; i < columnValues[0].length; i++) {
+        for (let i = 0; i < (columnValues[0] as any[]).length; i++) {
           const row = {};
           for (let j = 0; j < columns.length; j++) {
             row[columns[j]] = columnValues[j][i];
