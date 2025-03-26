@@ -131,6 +131,14 @@ export default class ImportExport extends AdminForthPlugin {
           return { ok: false, errors };
         }
 
+        const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
+        if (!primaryKeyColumn) {
+          return { 
+            ok: false, 
+            errors: ['Resource has no primary key column'] 
+          };
+        }
+
         const columnValues: any[] = Object.values(data);
         for (let i = 0; i < columnValues[0].length; i++) {
           const row = {};
@@ -142,7 +150,6 @@ export default class ImportExport extends AdminForthPlugin {
 
         let importedCount = 0;
         let updatedCount = 0;
-        const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
 
         await Promise.all(rows.map(async (row) => {
           try {
@@ -191,6 +198,14 @@ export default class ImportExport extends AdminForthPlugin {
           return { ok: false, errors };
         }
 
+        const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
+        if (!primaryKeyColumn) {
+          return { 
+            ok: false, 
+            errors: ['Resource has no primary key column'] 
+          };
+        }
+
         const columnValues: any[] = Object.values(data);
         for (let i = 0; i < columnValues[0].length; i++) {
           const row = {};
@@ -201,7 +216,6 @@ export default class ImportExport extends AdminForthPlugin {
         }
 
         let importedCount = 0;
-        const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
 
         await Promise.all(rows.map(async (row) => {
           try {
@@ -232,6 +246,13 @@ export default class ImportExport extends AdminForthPlugin {
         const { data } = body;
 
         const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
+
+        if (!primaryKeyColumn) {
+          return {
+            ok: false,
+            error: {message: 'Resource has no primary key column'},
+          };
+        }
 
         const rows = [];
         const columns = Object.keys(data);
