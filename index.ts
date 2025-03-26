@@ -232,19 +232,11 @@ export default class ImportExport extends AdminForthPlugin {
         const { data } = body;
 
         const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
-        if (!primaryKeyColumn) {
-          return {
-            ok: true,
-            total: Object.values(data)[0].length,
-            existingCount: 0,
-            newCount: Object.values(data)[0].length
-          };
-        }
 
         const rows = [];
         const columns = Object.keys(data);
         const columnValues = Object.values(data);
-        for (let i = 0; i < columnValues[0].length; i++) {
+        for (let i = 0; i < (columnValues[0] as any[]).length; i++) {
           const row = {};
           for (let j = 0; j < columns.length; j++) {
             row[columns[j]] = columnValues[j][i];
