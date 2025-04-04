@@ -57,29 +57,11 @@ export default class ImportExport extends AdminForthPlugin {
       handler: async ({ body }) => {
         const { filters, sort } = body;
 
-        for (const filter of (filters || [])) {
-          if (!Object.values(AdminForthFilterOperators).includes(filter.operator)) {
-              throw new Error(`Operator '${filter.operator}' is not allowed`);
-          }
-          if (!this.resourceConfig.columns.some((col) => col.name === filter.field)) {
-              throw new Error(`Field '${filter.field}' is not in resource '${this.resourceConfig.resourceId}'. Available fields: ${this.resourceConfig.columns.map((col) => col.name).join(', ')}`);
-          }
-          if (filter.operator === AdminForthFilterOperators.IN || filter.operator === AdminForthFilterOperators.NIN) {
-              if (!Array.isArray(filter.value)) {
-                  throw new Error(`Value for operator '${filter.operator}' should be an array`);
-              }
-          }
-          if (filter.operator === AdminForthFilterOperators.IN && filter.value.length === 0) {
-              // nonsense
-              return { data: [], total: 0 };
-          }
-        }
-
         const data = await this.adminforth.connectors[this.resourceConfig.dataSource].getData({
           resource: this.resourceConfig,
           limit: 1e6,
           offset: 0,
-          filters,
+          filters: this.adminforth.connectors[this.resourceConfig.dataSource].validateAndNormalizeInputFilters(filters),
           sort,
           getTotals: true,
         });
