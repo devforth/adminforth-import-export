@@ -151,7 +151,7 @@ async function importCsv() {
           complete: async (results) => {
             if (results.errors.length > 0) {
               adminforth.alert({
-                message: `CSV parsing errors: ${results.errors[0]?.message || 'Unknown error'}`,
+                message: `CSV parsing errors at row ${results.errors[0]?.row + 1 || '?'}: ${results.errors[0]?.message || 'Unknown error'}`,
                 variant: 'danger'
               });
               throw new Error(`CSV parsing errors: ${results.errors.map(e => e.message).join(', ')}`);
@@ -181,7 +181,7 @@ async function importCsv() {
           },
           error: (error) => {
             adminforth.alert({
-                message: `CSV parsing errors: ${results.errors[0]?.message || 'Unknown error'}`,
+                message: `CSV parsing errors: ${error.message}}`,
                 variant: 'danger'
             });
             throw new Error(`Failed to parse CSV: ${error.message}`);
