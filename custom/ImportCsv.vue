@@ -54,14 +54,14 @@ const computedButtons = computed(() => {
   if (!importStats.value) return [];
 
   const buttons = [
-    { label: t('⚠️ Import All — Replace & Overwrite'), onclick: (dialog) => { confirmImport(dialog) }, vIf: importStats.value.existingCount > 0 && importStats.value.newCount > 0 },
-    { label: t('⚠️ Replace Existing Records'), onclick: (dialog) => { confirmImport(dialog) }, vIf: importStats.value.existingCount > 0 && importStats.value.newCount === 0 },
-    { label: t('➕ Import New Only'), onclick: (dialog) => { confirmImportNewOnly(dialog) }, vIf: importStats.value.existingCount > 0 && importStats.value.newCount > 0 },
-    { label: t('➕ Import Records'), onclick: (dialog) => { confirmImportNewOnly(dialog) }, vIf: importStats.value.existingCount === 0 && importStats.value.newCount > 0 },
+    { label: t('⚠️ Import All — Replace & Overwrite'), onclick: (dialog) => { confirmImport(dialog) }, visible: importStats.value.existingCount > 0 && importStats.value.newCount > 0 },
+    { label: t('⚠️ Replace Existing Records'), onclick: (dialog) => { confirmImport(dialog) }, visible: importStats.value.existingCount > 0 && importStats.value.newCount === 0 },
+    { label: t('➕ Import New Only'), onclick: (dialog) => { confirmImportNewOnly(dialog) }, visible: importStats.value.existingCount > 0 && importStats.value.newCount > 0 },
+    { label: t('➕ Import Records'), onclick: (dialog) => { confirmImportNewOnly(dialog) }, visible: importStats.value.existingCount === 0 && importStats.value.newCount > 0 },
     { label: t('✖ Cancel'), onclick: (dialog) => dialog.hide() }
   ];
 
-  return buttons.filter(button => button.vIf !== false);
+  return buttons.filter(button => button.visible !== false);
 });
 async function confirmImport(dialog) {
   dialog.hide();
