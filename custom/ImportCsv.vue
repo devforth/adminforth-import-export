@@ -52,13 +52,13 @@ const props = defineProps({
 });
 const computedButtons = computed(() => {
   if (!importStats.value) return [];
-  
+
   const buttons = [
-    { label: t('⚠️ Replace Existing Records'), onclick: (dialog) => { confirmImport(dialog) }, vIf: importStats.value.existingCount > 0 && importStats.value.newCount === 0 },
-    { label: t('Import New Only'), onclick: (dialog) => { confirmImportNewOnly(dialog) }, vIf: importStats.value.existingCount > 0 && importStats.value.newCount === 0 },
     { label: t('⚠️ Import All — Replace & Overwrite'), onclick: (dialog) => { confirmImport(dialog) }, vIf: importStats.value.existingCount > 0 && importStats.value.newCount > 0 },
-    { label: t('Import Records'), onclick: (dialog) => { confirmImportNewOnly(dialog) }, vIf: !(importStats.value.existingCount > 0 && importStats.value.newCount === 0) },
-    { label: t('Cancel'), onclick: (dialog) => dialog.hide() }
+    { label: t('⚠️ Replace Existing Records'), onclick: (dialog) => { confirmImport(dialog) }, vIf: importStats.value.existingCount > 0 && importStats.value.newCount === 0 },
+    { label: t('➕ Import New Only'), onclick: (dialog) => { confirmImportNewOnly(dialog) }, vIf: importStats.value.existingCount > 0 && importStats.value.newCount > 0 },
+    { label: t('➕ Import Records'), onclick: (dialog) => { confirmImportNewOnly(dialog) }, vIf: importStats.value.existingCount === 0 && importStats.value.newCount > 0 },
+    { label: t('✖ Cancel'), onclick: (dialog) => dialog.hide() }
   ];
 
   return buttons.filter(button => button.vIf !== false);
