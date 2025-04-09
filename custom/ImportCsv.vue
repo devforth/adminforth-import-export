@@ -150,12 +150,20 @@ async function importCsv() {
 
           complete: async (results) => {
             if (results.errors.length > 0) {
+              adminforth.alert({
+                message: `CSV parsing errors at row ${results.errors[0]?.row + 1 || '?'}: ${results.errors[0]?.message || 'Unknown error'}`,
+                variant: 'danger'
+              });
               throw new Error(`CSV parsing errors: ${results.errors.map(e => e.message).join(', ')}`);
             }
             const data: Record<string, string[]> = {};
             const rows = results.data as Record<string, string>[];
             
             if (rows.length === 0) {
+              adminforth.alert({
+                message: `No data rows found in CSV`,
+                variant: 'danger'
+              });
               throw new Error('No data rows found in CSV');
             }
             Object.keys(rows[0]).forEach(column => {
@@ -172,6 +180,10 @@ async function importCsv() {
             inProgress.value = false;
           },
           error: (error) => {
+            adminforth.alert({
+                message: `CSV parsing errors: ${error.message}}`,
+                variant: 'danger'
+            });
             throw new Error(`Failed to parse CSV: ${error.message}`);
           }
         });
