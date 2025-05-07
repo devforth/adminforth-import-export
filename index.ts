@@ -212,35 +212,38 @@ export default class ImportExport extends AdminForthPlugin {
       path: `/plugin/${this.pluginInstanceId}/check-records`,
       noAuth: true,
       handler: async ({ body }) => {
-        const { data } = body;
-
+        const { data } = body as { data: Record<string, unknown[]> };
         const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
-
-        const rows = [];
         const columns = Object.keys(data);
         const columnValues = Object.values(data);
-        for (let i = 0; i < (columnValues[0] as any[]).length; i++) {
+
+        const rows = Array.from({ length: columnValues[0].length }, (_, i) => {
           const row = {};
           for (let j = 0; j < columns.length; j++) {
             row[columns[j]] = columnValues[j][i];
           }
-          rows.push(row);
-        }
+          return row;
+        });
 
         const primaryKeys = rows
           .map(row => row[primaryKeyColumn.name])
           .filter(key => key !== undefined && key !== null && key !== '');
 
-        const records = await this.adminforth.resource(this.resourceConfig.resourceId).list([])
-
-        const existingRecords = records.filter((record) => primaryKeys.includes(record[primaryKeyColumn.name]));
+        const existingRecords = await this.adminforth
+          .resource(this.resourceConfig.resourceId)
+          .list([{
+            field: primaryKeyColumn.name,
+            operator: AdminForthFilterOperators.IN,
+            value: primaryKeys,
+          }]);
 
         return {
           ok: true,
           total: rows.length,
           existingCount: existingRecords.length,
-          newCount: rows.length - existingRecords.length
+          newCount: rows.length - existingRecords.length,
         };
+
       }
     });
   }
