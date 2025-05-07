@@ -1,9 +1,16 @@
 <template>
-    <div @click="importCsv"  class="cursor-pointer flex gap-2 items-center">
+    <div @click="handleImportClick"
+    :class="[
+      'cursor-pointer flex gap-2 items-center',
+      checkProgress ? 'opacity-50 pointer-events-none' : ''
+    ]">
       {{$t('Import from CSV')}}
-
-      <svg v-if="inProgress"
-        aria-hidden="true" class="w-4 h-4 text-gray-200 animate-spin dark:text-gray-600 fill-blue-600" viewBox="0 0 100 101" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M100 50.5908C100 78.2051 77.6142 100.591 50 100.591C22.3858 100.591 0 78.2051 0 50.5908C0 22.9766 22.3858 0.59082 50 0.59082C77.6142 0.59082 100 22.9766 100 50.5908ZM9.08144 50.5908C9.08144 73.1895 27.4013 91.5094 50 91.5094C72.5987 91.5094 90.9186 73.1895 90.9186 50.5908C90.9186 27.9921 72.5987 9.67226 50 9.67226C27.4013 9.67226 9.08144 27.9921 9.08144 50.5908Z" fill="currentColor"/><path d="M93.9676 39.0409C96.393 38.4038 97.8624 35.9116 97.0079 33.5539C95.2932 28.8227 92.871 24.3692 89.8167 20.348C85.8452 15.1192 80.8826 10.7238 75.2124 7.41289C69.5422 4.10194 63.2754 1.94025 56.7698 1.05124C51.7666 0.367541 46.6976 0.446843 41.7345 1.27873C39.2613 1.69328 37.813 4.19778 38.4501 6.62326C39.0873 9.04874 41.5694 10.4717 44.0505 10.1071C47.8511 9.54855 51.7191 9.52689 55.5402 10.0491C60.8642 10.7766 65.9928 12.5457 70.6331 15.2552C75.2735 17.9648 79.3347 21.5619 82.5849 25.841C84.9175 28.9121 86.7997 32.2913 88.1811 35.8758C89.083 38.2158 91.5421 39.6781 93.9676 39.0409Z" fill="currentFill"/></svg>
+    </div>
+    <div v-if="checkProgress" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-20">
+      <div class="flex flex-col items-center bg-white dark:bg-gray-800 p-6 rounded-lg shadow-lg">
+        <p class="text-gray-700 dark:text-gray-300 text-sm">{{ $t('Checking data...') }}</p>
+        <svg aria-hidden="true" class="w-4 h-4 text-gray-200 animate-spin dark:text-gray-600 fill-blue-600" viewBox="0 0 100 101" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M100 50.5908C100 78.2051 77.6142 100.591 50 100.591C22.3858 100.591 0 78.2051 0 50.5908C0 22.9766 22.3858 0.59082 50 0.59082C77.6142 0.59082 100 22.9766 100 50.5908ZM9.08144 50.5908C9.08144 73.1895 27.4013 91.5094 50 91.5094C72.5987 91.5094 90.9186 73.1895 90.9186 50.5908C90.9186 27.9921 72.5987 9.67226 50 9.67226C27.4013 9.67226 9.08144 27.9921 9.08144 50.5908Z" fill="currentColor"/><path d="M93.9676 39.0409C96.393 38.4038 97.8624 35.9116 97.0079 33.5539C95.2932 28.8227 92.871 24.3692 89.8167 20.348C85.8452 15.1192 80.8826 10.7238 75.2124 7.41289C69.5422 4.10194 63.2754 1.94025 56.7698 1.05124C51.7666 0.367541 46.6976 0.446843 41.7345 1.27873C39.2613 1.69328 37.813 4.19778 38.4501 6.62326C39.0873 9.04874 41.5694 10.4717 44.0505 10.1071C47.8511 9.54855 51.7191 9.52689 55.5402 10.0491C60.8642 10.7766 65.9928 12.5457 70.6331 15.2552C75.2735 17.9648 79.3347 21.5619 82.5849 25.841C84.9175 28.9121 86.7997 32.2913 88.1811 35.8758C89.083 38.2158 91.5421 39.6781 93.9676 39.0409Z" fill="currentFill"/></svg>
+      </div>
     </div>
     <Dialog ref="confirmDialog" :header="t('Import Confirmation')" :buttons="computedButtons">
     <div v-if="importStats">
@@ -29,11 +36,17 @@
         <p>{{ $t('Would you like to proceed?') }}</p>
       </template>
     </div>
+    <div v-if="importProgress" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-20">
+      <div class="flex flex-col items-center bg-white dark:bg-gray-800 p-6 rounded-lg shadow-lg">
+        <p class="text-gray-700 dark:text-gray-300 text-sm">{{ $t('Importing...') }}</p>
+        <svg aria-hidden="true" class="w-4 h-4 text-gray-200 animate-spin dark:text-gray-600 fill-blue-600" viewBox="0 0 100 101" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M100 50.5908C100 78.2051 77.6142 100.591 50 100.591C22.3858 100.591 0 78.2051 0 50.5908C0 22.9766 22.3858 0.59082 50 0.59082C77.6142 0.59082 100 22.9766 100 50.5908ZM9.08144 50.5908C9.08144 73.1895 27.4013 91.5094 50 91.5094C72.5987 91.5094 90.9186 73.1895 90.9186 50.5908C90.9186 27.9921 72.5987 9.67226 50 9.67226C27.4013 9.67226 9.08144 27.9921 9.08144 50.5908Z" fill="currentColor"/><path d="M93.9676 39.0409C96.393 38.4038 97.8624 35.9116 97.0079 33.5539C95.2932 28.8227 92.871 24.3692 89.8167 20.348C85.8452 15.1192 80.8826 10.7238 75.2124 7.41289C69.5422 4.10194 63.2754 1.94025 56.7698 1.05124C51.7666 0.367541 46.6976 0.446843 41.7345 1.27873C39.2613 1.69328 37.813 4.19778 38.4501 6.62326C39.0873 9.04874 41.5694 10.4717 44.0505 10.1071C47.8511 9.54855 51.7191 9.52689 55.5402 10.0491C60.8642 10.7766 65.9928 12.5457 70.6331 15.2552C75.2735 17.9648 79.3347 21.5619 82.5849 25.841C84.9175 28.9121 86.7997 32.2913 88.1811 35.8758C89.083 38.2158 91.5421 39.6781 93.9676 39.0409Z" fill="currentFill"/></svg>
+      </div>
+    </div>
 </Dialog>
 </template>
 
 <script setup lang="ts">
-import { ref, Ref, computed } from 'vue';
+import { ref, Ref, computed, watch } from 'vue';
 import { callAdminForthApi } from '@/utils';
 import adminforth from '@/adminforth';
 import Papa from 'papaparse';
@@ -42,7 +55,8 @@ import { useI18n } from 'vue-i18n';
 
 const { t } = useI18n();
 
-const inProgress: Ref<boolean> = ref(false);
+const importProgress: Ref<boolean> = ref(false);
+const checkProgress: Ref<boolean> = ref(false);
 const confirmDialog = ref(null);
 const importStats = ref(null);
 const pendingData = ref(null);
@@ -64,33 +78,35 @@ const computedButtons = computed(() => {
   return buttons.filter(button => button.visible !== false);
 });
 async function confirmImport(dialog) {
-  dialog.hide();
   await postData(pendingData.value);
+  dialog.hide();
 }
 
 async function checkRecords(data: Record<string, string[]>) {
+  checkProgress.value = true;
   const resp = await callAdminForthApi({
     path: `/plugin/${props.meta.pluginInstanceId}/check-records`,
     method: 'POST',
     body: { data }
   });
-
+  checkProgress.value = false;
   return resp;
 }
 
 async function confirmImportNewOnly(dialog) {
-  dialog.hide();
   await postDataNewOnly(pendingData.value);
+  dialog.hide();
 }
 
 async function postData(data: Record<string, string[]>, skipDuplicates: boolean = false) {
+  importProgress.value = true;
   const resp = await callAdminForthApi({
     path: `/plugin/${props.meta.pluginInstanceId}/import-csv`,
     method: 'POST',
     body: { data }
   });
 
-  inProgress.value = false;
+  importProgress.value = false;
 
   if (resp.importedCount > 0 || resp.updatedCount > 0) {
     adminforth.list.refresh();
@@ -106,13 +122,14 @@ async function postData(data: Record<string, string[]>, skipDuplicates: boolean 
 }
 
 async function postDataNewOnly(data: Record<string, string[]>) {
+  importProgress.value = true;
   const resp = await callAdminForthApi({
     path: `/plugin/${props.meta.pluginInstanceId}/import-csv-new-only`,
     method: 'POST',
     body: { data }
   });
 
-  inProgress.value = false;
+  importProgress.value = false;
   if (resp.importedCount > 0) {
     adminforth.list.refresh();
   }
@@ -125,18 +142,15 @@ async function postDataNewOnly(data: Record<string, string[]>) {
 }
 
 async function importCsv() {
-  inProgress.value = false;
   const fileInput = document.createElement('input');
 
   fileInput.type = 'file';
   fileInput.accept = '.csv';
   fileInput.click();
   fileInput.onchange = async (e) => {
-    inProgress.value = true;
 
     const file = (e.target as HTMLInputElement).files?.[0];
     if (!file) {
-      inProgress.value = false;
       return;
     }
     const reader = new FileReader();
@@ -177,7 +191,6 @@ async function importCsv() {
             const stats = await checkRecords(data);
             importStats.value = stats;
             confirmDialog.value?.open();
-            inProgress.value = false;
           },
           error: (error) => {
             adminforth.alert({
@@ -188,7 +201,6 @@ async function importCsv() {
           }
         });
       } catch (error) {
-        inProgress.value = false;
         adminforth.alert({
           message: `Error processing CSV: ${error.message}`,
           variant: 'danger'
@@ -197,5 +209,11 @@ async function importCsv() {
     };
     reader.readAsText(file);
   };
+}
+function handleImportClick() {
+  console.log('handleImportClick', checkProgress.value);
+  if (!checkProgress.value) {
+    importCsv();
+  }
 }
 </script>
