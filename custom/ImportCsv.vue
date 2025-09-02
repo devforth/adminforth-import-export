@@ -52,6 +52,8 @@ import adminforth from '@/adminforth';
 import Papa from 'papaparse';
 import { Dialog } from '@/afcl';
 import { useI18n } from 'vue-i18n';
+import { IconCheckOutline, IconCloseOutline } from '@iconify-prerendered/vue-flowbite';
+
 
 const { t } = useI18n();
 
@@ -70,9 +72,9 @@ const computedButtons = computed(() => {
   const buttons = [
     { label: t('⚠️ Import All — Replace & Overwrite'), onclick: (dialog) => { confirmImport(dialog) }, visible: importStats.value.existingCount > 0 && importStats.value.newCount > 0 },
     { label: t('⚠️ Replace Existing Records'), onclick: (dialog) => { confirmImport(dialog) }, visible: importStats.value.existingCount > 0 && importStats.value.newCount === 0 },
-    { label: t('➕ Import New Only'), onclick: (dialog) => { confirmImportNewOnly(dialog) }, visible: importStats.value.existingCount > 0 && importStats.value.newCount > 0 },
-    { label: t('➕ Import Records'), onclick: (dialog) => { confirmImportNewOnly(dialog) }, visible: importStats.value.existingCount === 0 && importStats.value.newCount > 0 },
-    { label: t('✖ Cancel'), onclick: (dialog) => dialog.hide() }
+    { label: t('Import New Only'), onclick: (dialog) => { confirmImportNewOnly(dialog) }, visible: importStats.value.existingCount > 0 && importStats.value.newCount > 0 },
+    { label: t('Import Records'), onclick: (dialog) => { confirmImportNewOnly(dialog) }, visible: importStats.value.existingCount === 0 && importStats.value.newCount > 0 },
+    { label: t('Cancel'), onclick: (dialog) => dialog.hide() }
   ];
 
   return buttons.filter(button => button.visible !== false);
