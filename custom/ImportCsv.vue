@@ -52,7 +52,6 @@ import adminforth from '@/adminforth';
 import Papa from 'papaparse';
 import { Dialog } from '@/afcl';
 import { useI18n } from 'vue-i18n';
-import { IconCheckOutline, IconCloseOutline } from '@iconify-prerendered/vue-flowbite';
 
 
 const { t } = useI18n();
