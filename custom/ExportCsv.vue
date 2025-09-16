@@ -19,6 +19,10 @@ const filtersStore = useFiltersStore();
 const coreStore = useCoreStore();
 const inProgress = ref(false);
 
+defineExpose({
+  click,
+});
+
 const props = defineProps({
   meta: Object,
   record: Object,
@@ -76,5 +80,9 @@ async function exportCsv() {
     inProgress.value = false;
     adminforth.list.closeThreeDotsDropdown();
   }
+}
+
+function click() {
+  exportCsv();
 }
 </script>
