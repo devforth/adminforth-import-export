@@ -1,5 +1,6 @@
 <template>
     <div @click="handleImportClick"
+    class="px-4 py-2"
     :class="[
       'cursor-pointer flex gap-2 items-center',
       checkProgress ? 'opacity-50 pointer-events-none' : ''
