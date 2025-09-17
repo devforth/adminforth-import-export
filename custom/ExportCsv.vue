@@ -1,5 +1,5 @@
 <template>
-  <div @click="exportCsv" class="cursor-pointer flex gap-2 items-center">
+  <div class="cursor-pointer flex gap-2 items-center">
     {{$t("Export")}} {{ meta.select === 'all' ? $t('All'): $t('Filtered') }} {{$t('to CSV')}}
 
     <svg v-if="inProgress"
