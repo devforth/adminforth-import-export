@@ -1,5 +1,5 @@
 <template>
-    <div @click="handleImportClick"
+    <div
     :class="[
       'cursor-pointer flex gap-2 items-center',
       checkProgress ? 'opacity-50 pointer-events-none' : ''
@@ -55,6 +55,9 @@ import { useI18n } from 'vue-i18n';
 
 
 const { t } = useI18n();
+defineExpose({
+  click,
+});
 
 const importProgress: Ref<boolean> = ref(false);
 const checkProgress: Ref<boolean> = ref(false);
@@ -216,5 +219,9 @@ function handleImportClick() {
   if (!checkProgress.value) {
     importCsv();
   }
+}
+
+function click() {
+  importCsv();
 }
 </script>
