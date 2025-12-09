@@ -128,6 +128,27 @@ export default class ImportExport extends AdminForthPlugin {
         let updatedCount = 0;
 
         await Promise.all(rows.map(async (row) => {
+          this.resourceConfig.columns.forEach((col) => {
+            if (col.isArray?.enabled) {
+              const val = row[col.name];
+              if (typeof val === 'string') {
+                if (!val.trim()) {
+                  row[col.name] = [];
+                } else {
+                  if (val.trim().startsWith('[') && val.trim().endsWith(']')) {
+                    try { row[col.name] = JSON.parse(val); } 
+                    catch (e) { row[col.name] = val.split(',').map(s => s.trim()); }
+                  } else {
+                    row[col.name] = val.split(',').map(s => s.trim());
+                  }
+                }
+              } else if (typeof val === 'number') {
+                row[col.name] = [val.toString()];
+              } else if (val === null || val === undefined) {
+                row[col.name] = [];
+              }
+            }
+          });
           try {
             if (primaryKeyColumn && row[primaryKeyColumn.name]) {
               const existingRecord = await this.adminforth.resource(this.resourceConfig.resourceId)
@@ -186,7 +207,30 @@ export default class ImportExport extends AdminForthPlugin {
 
         let importedCount = 0;
 
+
         await Promise.all(rows.map(async (row) => {
+          this.resourceConfig.columns.forEach((col) => { 
+            if (col.isArray?.enabled) {
+              const val = row[col.name];
+              if (typeof val === 'string') {
+                if (!val.trim()) {
+                  row[col.name] = [];
+                } else {
+                  if (val.trim().startsWith('[') && val.trim().endsWith(']')) {
+                    try { row[col.name] = JSON.parse(val); } 
+                    catch (e) { row[col.name] = val.split(',').map(s => s.trim()); }
+                  } else {
+                    row[col.name] = val.split(',').map(s => s.trim());
+                  }
+                }
+              } else if (typeof val === 'number') {
+                row[col.name] = [val.toString()];
+              } else if (val === null || val === undefined) {
+                row[col.name] = [];
+              }
+            }
+          });
+          
           try {
             if (primaryKeyColumn && row[primaryKeyColumn.name]) {
               const existingRecord = await this.adminforth.resource(this.resourceConfig.resourceId)
