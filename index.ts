@@ -57,10 +57,16 @@ export default class ImportExport extends AdminForthPlugin {
           if (!val.trim()) {
             row[col.name] = [];
           } else {
+            let useCommaParsing = false;
+
             if (val.trim().startsWith('[') && val.trim().endsWith(']')) {
               try { row[col.name] = JSON.parse(val); } 
-              catch (e) { row[col.name] = val.split(',').map(s => s.trim()); }
+              catch (e) { useCommaParsing = true; }
             } else {
+              useCommaParsing = true;
+            }
+
+            if (useCommaParsing) {
               row[col.name] = val.split(',').map(s => s.trim());
             }
           }
