@@ -25,7 +25,9 @@
   "author": "devforth",
   "license": "ISC",
   "description": "CSV import/export plugin for adminforth",
-  "dependencies": {},
+  "peerDependencies": {
+    "adminforth": "^2.9.5"
+  },
   "devDependencies": {
     "@types/node": "^22.10.7",
     "semantic-release": "^24.2.1",
