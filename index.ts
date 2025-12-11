@@ -57,7 +57,7 @@ export default class ImportExport extends AdminForthPlugin {
           if (!val.trim()) {
             row[col.name] = [];
           } else {
-            let useCommaParsing = false;
+          let useCommaParsing = false;
 
             if (val.trim().startsWith('[') && val.trim().endsWith(']')) {
               try { row[col.name] = JSON.parse(val); } 
@@ -70,8 +70,6 @@ export default class ImportExport extends AdminForthPlugin {
               row[col.name] = val.split(',').map(s => s.trim());
             }
           }
-        } else if (typeof val === 'number') {
-          row[col.name] = [val.toString()];
         } else if (val === null || val === undefined) {
           row[col.name] = [];
         }
