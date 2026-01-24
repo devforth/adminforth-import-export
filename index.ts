@@ -1,4 +1,4 @@
-import { AdminForthPlugin, suggestIfTypo, AdminForthFilterOperators, Filters } from "adminforth";
+import { AdminForthPlugin, suggestIfTypo, AdminForthFilterOperators, Filters, AdminForthDataTypes } from "adminforth";
 import type { IAdminForth, IHttpServer, AdminForthResourceColumn, AdminForthComponentDeclaration, AdminForthResource } from "adminforth";
 import type { PluginOptions } from './types.js';
 
@@ -69,8 +69,23 @@ export default class ImportExport extends AdminForthPlugin {
         // csv export
         const columns = this.resourceConfig.columns.filter((col) => !col.virtual);
         
-        const escapeCSV = (value: any) => {
-          if (value === null || value === undefined) return '""';
+        const escapeCSV = (value: any, column?: AdminForthResourceColumn) => {
+          if (value === null || value === undefined) {
+            return '""';
+          }
+          if (column?.type === AdminForthDataTypes.FLOAT 
+              || column?.type === AdminForthDataTypes.INTEGER) {
+            // no quotes for numbers
+            return String(value);
+          }
+          if (column?.type === AdminForthDataTypes.BOOLEAN) {
+            // no quotes for boolean values
+            if (value === true) {
+              return 'true';
+            } else if (value === false) {
+              return 'false';
+            }
+          }
           const str = String(value);
           if (str.includes(',') || str.includes('"') || str.includes('\n')) {
             return `"${str.replace(/"/g, '""')}"`;
@@ -79,7 +94,7 @@ export default class ImportExport extends AdminForthPlugin {
         };
 
         let csv = data.data.map((row) => {
-          return columns.map((col) => escapeCSV(row[col.name])).join(',');
+          return columns.map((col) => escapeCSV(row[col.name], col)).join(',');
         }).join('\n');
 
         // add headers
