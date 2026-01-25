@@ -165,6 +165,7 @@ async function importCsv() {
         Papa.parse(text, {
           header: true,
           skipEmptyLines: true,
+          // dynamicTyping: true, - bad option becaue it tries to parse "1" -> int even if the column is string 
 
           complete: async (results) => {
             if (results.errors.length > 0) {
@@ -214,12 +215,7 @@ async function importCsv() {
     reader.readAsText(file);
   };
 }
-function handleImportClick() {
-  console.log('handleImportClick', checkProgress.value);
-  if (!checkProgress.value) {
-    importCsv();
-  }
-}
+
 
 function click() {
   importCsv();

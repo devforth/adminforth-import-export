@@ -66,42 +66,27 @@ export default class ImportExport extends AdminForthPlugin {
           getTotals: true,
         });
 
-        // csv export
+        // prepare data for PapaParse unparse
         const columns = this.resourceConfig.columns.filter((col) => !col.virtual);
-        
-        const escapeCSV = (value: any, column?: AdminForthResourceColumn) => {
-          if (value === null || value === undefined) {
-            return '""';
-          }
-          if (column?.type === AdminForthDataTypes.FLOAT 
-              || column?.type === AdminForthDataTypes.INTEGER) {
-            // no quotes for numbers
-            return String(value);
-          }
-          if (column?.type === AdminForthDataTypes.BOOLEAN) {
-            // no quotes for boolean values
-            if (value === true) {
-              return 'true';
-            } else if (value === false) {
-              return 'false';
-            }
-          }
-          const str = String(value);
-          if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-            return `"${str.replace(/"/g, '""')}"`;
-          }
-          return `"${str}"`;
+
+        const columnsToForceQuote = columns.map(col => {
+          return col.type !== AdminForthDataTypes.FLOAT 
+            && col.type !== AdminForthDataTypes.INTEGER 
+            && col.type !== AdminForthDataTypes.BOOLEAN;
+        })
+
+        const fields = columns.map((col) => col.name);
+
+        const rows = data.data.map((row) => {
+          return columns.map((col) => row[col.name]);
+        });
+
+        return { 
+          data: { fields, data: rows }, 
+          columnsToForceQuote, 
+          exportedCount: data.total, 
+          ok: true 
         };
-
-        let csv = data.data.map((row) => {
-          return columns.map((col) => escapeCSV(row[col.name], col)).join(',');
-        }).join('\n');
-
-        // add headers
-        const headers = columns.map((col) => escapeCSV(col.name)).join(',');
-        csv = `${headers}\n${csv}`;
-
-        return { data: csv, exportedCount: data.total, ok: true };
       }
     });
 
@@ -130,14 +115,30 @@ export default class ImportExport extends AdminForthPlugin {
 
         const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
 
+        const resourceColumns = columns.map(colName => this.resourceConfig.columns.find(c => c.name === colName));
+
         const columnValues: any[] = Object.values(data);
         for (let i = 0; i < columnValues[0].length; i++) {
           const row = {};
           for (let j = 0; j < columns.length; j++) {
-            row[columns[j]] = columnValues[j][i];
+            const val = columnValues[j][i];
+            const resourceCol = resourceColumns[j];
+
+            if ( (resourceCol.type === AdminForthDataTypes.INTEGER 
+                || resourceCol.type === AdminForthDataTypes.FLOAT) && val !== ''
+              ) {
+              // convert empty strings to null for numeric fields
+              row[columns[j]] = +val;
+            } else if (resourceCol.type === AdminForthDataTypes.BOOLEAN && val !== '') {
+              row[columns[j]] = (val.toLowerCase() === 'true' || val === '1' || val === 1);
+            } else {
+              row[columns[j]] = val;
+            }
           }
           rows.push(row);
         }
+
+        console.log('Prepared rows for import:', rows);
 
         let importedCount = 0;
         let updatedCount = 0;
@@ -190,11 +191,24 @@ export default class ImportExport extends AdminForthPlugin {
         }
 
         const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
+        const resourceColumns = columns.map(colName => this.resourceConfig.columns.find(c => c.name === colName));
         const columnValues: any[] = Object.values(data);
         for (let i = 0; i < columnValues[0].length; i++) {
           const row = {};
           for (let j = 0; j < columns.length; j++) {
-            row[columns[j]] = columnValues[j][i];
+            const val = columnValues[j][i];
+            const resourceCol = resourceColumns[j];
+
+            if ( (resourceCol.type === AdminForthDataTypes.INTEGER 
+                || resourceCol.type === AdminForthDataTypes.FLOAT) && val !== ''
+              ) {
+              // convert empty strings to null for numeric fields
+              row[columns[j]] = +val;
+            } else if (resourceCol.type === AdminForthDataTypes.BOOLEAN && val !== '') {
+              row[columns[j]] = (val.toLowerCase() === 'true' || val === '1' || val === 1);
+            } else {
+              row[columns[j]] = val;
+            }
           }
           rows.push(row);
         }

@@ -54,12 +54,9 @@ async function exportCsv() {
       throw new Error(resp.error);
     }
 
-    // Parse the CSV data to ensure proper formatting
-    const parsedData = Papa.parse(resp.data).data;
-    
     // Generate properly formatted CSV
-    const csvContent = '\ufeff' + Papa.unparse(parsedData, {
-      quotes: true, // Force quotes around all fields
+    const csvContent = '\ufeff' + Papa.unparse(resp.data, {
+      quotes: resp.columnsToForceQuote, // Force quotes only certain columns (!!!not all this breaks BI/Excel tasks)
       quoteChar: '"',
       escapeChar: '"',
     });
