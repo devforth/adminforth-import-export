@@ -96,47 +96,13 @@ export default class ImportExport extends AdminForthPlugin {
       noAuth: true,
       handler: async ({ body }) => {
         const { data } = body;
-        const rows = [];
-        const columns = Object.keys(data);
-
-        // check column names are valid
-        const errors: string[] = [];
-        columns.forEach((col) => {
-          if (!this.resourceConfig.columns.some((c) => c.name === col)) {
-            const similar = suggestIfTypo(this.resourceConfig.columns.map((c) => c.name), col);
-            errors.push(`Column '${col}' defined in CSV not found in resource '${this.resourceConfig.resourceId}'. ${
-              similar ? `If you mean '${similar}', rename it in CSV` : 'If column is in database but not in resource configuration, add it with showIn:[]'}`
-            );
-          }
-        });
+        const columns = this.getColumnNames(data);
+        const { errors, resourceColumns } = this.validateColumns(columns);
         if (errors.length > 0) {
           return { ok: false, errors };
         }
-
         const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
-
-        const resourceColumns = columns.map(colName => this.resourceConfig.columns.find(c => c.name === colName));
-
-        const columnValues: any[] = Object.values(data);
-        for (let i = 0; i < columnValues[0].length; i++) {
-          const row = {};
-          for (let j = 0; j < columns.length; j++) {
-            const val = columnValues[j][i];
-            const resourceCol = resourceColumns[j];
-
-            if ( (resourceCol.type === AdminForthDataTypes.INTEGER 
-                || resourceCol.type === AdminForthDataTypes.FLOAT) && val !== ''
-              ) {
-              // convert empty strings to null for numeric fields
-              row[columns[j]] = +val;
-            } else if (resourceCol.type === AdminForthDataTypes.BOOLEAN && val !== '') {
-              row[columns[j]] = (val.toLowerCase() === 'true' || val === '1' || val === 1);
-            } else {
-              row[columns[j]] = val;
-            }
-          }
-          rows.push(row);
-        }
+        const rows = this.buildRowsFromData(data, columns, resourceColumns, { coerceTypes: true });
 
         console.log('Prepared rows for import:', rows);
 
@@ -173,45 +139,14 @@ export default class ImportExport extends AdminForthPlugin {
       noAuth: true,
       handler: async ({ body }) => {
         const { data } = body;
-        const rows = [];
-        const columns = Object.keys(data);
-
-        // check column names are valid
-        const errors: string[] = [];
-        columns.forEach((col) => {
-          if (!this.resourceConfig.columns.some((c) => c.name === col)) {
-            const similar = suggestIfTypo(this.resourceConfig.columns.map((c) => c.name), col);
-            errors.push(`Column '${col}' defined in CSV not found in resource '${this.resourceConfig.resourceId}'. ${
-              similar ? `If you mean '${similar}', rename it in CSV` : 'If column is in database but not in resource configuration, add it with showIn:[]'}`
-            );
-          }
-        });
+        const columns = this.getColumnNames(data);
+        const { errors, resourceColumns } = this.validateColumns(columns);
         if (errors.length > 0) {
           return { ok: false, errors };
         }
 
         const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
-        const resourceColumns = columns.map(colName => this.resourceConfig.columns.find(c => c.name === colName));
-        const columnValues: any[] = Object.values(data);
-        for (let i = 0; i < columnValues[0].length; i++) {
-          const row = {};
-          for (let j = 0; j < columns.length; j++) {
-            const val = columnValues[j][i];
-            const resourceCol = resourceColumns[j];
-
-            if ( (resourceCol.type === AdminForthDataTypes.INTEGER 
-                || resourceCol.type === AdminForthDataTypes.FLOAT) && val !== ''
-              ) {
-              // convert empty strings to null for numeric fields
-              row[columns[j]] = +val;
-            } else if (resourceCol.type === AdminForthDataTypes.BOOLEAN && val !== '') {
-              row[columns[j]] = (val.toLowerCase() === 'true' || val === '1' || val === 1);
-            } else {
-              row[columns[j]] = val;
-            }
-          }
-          rows.push(row);
-        }
+        const rows = this.buildRowsFromData(data, columns, resourceColumns, { coerceTypes: true });
 
         let importedCount = 0;
 
@@ -243,19 +178,11 @@ export default class ImportExport extends AdminForthPlugin {
       handler: async ({ body }) => {
         const { data } = body as { data: Record<string, unknown[]> };
         const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
-        const columns = Object.keys(data);
-        const columnValues = Object.values(data);
-
-        const rows = Array.from({ length: columnValues[0].length }, (_, i) => {
-          const row = {};
-          for (let j = 0; j < columns.length; j++) {
-            row[columns[j]] = columnValues[j][i];
-          }
-          return row;
-        });
+        const columns = this.getColumnNames(data);
+        const rows = this.buildRowsFromData(data, columns, undefined, { coerceTypes: false });
 
         const primaryKeys = rows
-          .map(row => row[primaryKeyColumn.name])
+          .map(row => primaryKeyColumn ? row[primaryKeyColumn.name] : undefined)
           .filter(key => key !== undefined && key !== null && key !== '');
 
         const existingRecords = await this.adminforth
@@ -275,6 +202,87 @@ export default class ImportExport extends AdminForthPlugin {
 
       }
     });
+  }
+
+  private getColumnNames(data: Record<string, unknown[]>): string[] {
+    return Object.keys(data ?? {});
+  }
+
+  private validateColumns(columns: string[]): {
+    errors: string[];
+    resourceColumns: AdminForthResourceColumn[];
+  } {
+    const errors: string[] = [];
+    const resourceColumns: AdminForthResourceColumn[] = [];
+
+    columns.forEach((col) => {
+      const resourceColumn = this.resourceConfig.columns.find((c) => c.name === col);
+      if (!resourceColumn) {
+        const similar = suggestIfTypo(this.resourceConfig.columns.map((c) => c.name), col);
+        errors.push(
+          `Column '${col}' defined in CSV not found in resource '${this.resourceConfig.resourceId}'. ${
+            similar
+              ? `If you mean '${similar}', rename it in CSV`
+              : 'If column is in database but not in resource configuration, add it with showIn:[]'
+          }`
+        );
+        return;
+      }
+      resourceColumns.push(resourceColumn);
+    });
+
+    return { errors, resourceColumns };
+  }
+
+  private buildRowsFromData(
+    data: Record<string, unknown[]>,
+    columns: string[],
+    resourceColumns?: AdminForthResourceColumn[],
+    { coerceTypes }: { coerceTypes: boolean } = { coerceTypes: true }
+  ) {
+    const columnValues: unknown[][] = Object.values(data ?? {});
+    if (columns.length === 0 || columnValues.length === 0) {
+      return [];
+    }
+
+    const rows: Record<string, unknown>[] = [];
+    const rowCount = columnValues[0].length;
+
+    for (let i = 0; i < rowCount; i++) {
+      const row: Record<string, unknown> = {};
+      for (let j = 0; j < columns.length; j++) {
+        const val = columnValues[j][i];
+        const resourceCol = resourceColumns ? resourceColumns[j] : undefined;
+        row[columns[j]] = coerceTypes
+          ? this.coerceValue(resourceCol, val)
+          : val;
+      }
+      rows.push(row);
+    }
+
+    return rows;
+  }
+
+  private coerceValue(resourceCol: AdminForthResourceColumn | undefined, val: unknown): unknown {
+    if (!resourceCol || val === '') {
+      return val;
+    }
+
+    if (
+      (resourceCol.type === AdminForthDataTypes.INTEGER
+        || resourceCol.type === AdminForthDataTypes.FLOAT)
+    ) {
+      return +val;
+    }
+
+    if (resourceCol.type === AdminForthDataTypes.BOOLEAN) {
+      if (typeof val === 'string') {
+        return val.toLowerCase() === 'true' || val === '1';
+      }
+      return val === 1 || val === true;
+    }
+
+    return val;
   }
 
 }
