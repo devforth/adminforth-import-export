@@ -48,6 +48,34 @@ export default class ImportExport extends AdminForthPlugin {
     // Needed if plugin can have multiple instances on one resource 
     return `${this.pluginInstanceId}`;
   }
+  fixArrayFields(row: any) {
+    this.resourceConfig.columns.forEach((col) => {
+      if (col.isArray?.enabled) {
+        const val = row[col.name];
+        
+        if (typeof val === 'string') {
+          if (!val.trim()) {
+            row[col.name] = [];
+          } else {
+          let useCommaParsing = false;
+
+            if (val.trim().startsWith('[') && val.trim().endsWith(']')) {
+              try { row[col.name] = JSON.parse(val); } 
+              catch (e) { useCommaParsing = true; }
+            } else {
+              useCommaParsing = true;
+            }
+
+            if (useCommaParsing) {
+              row[col.name] = val.split(',').map(s => s.trim());
+            }
+          }
+        } else if (val === null || val === undefined) {
+          row[col.name] = [];
+        }
+      }
+    });
+  }
 
   setupEndpoints(server: IHttpServer) {
     server.endpoint({
@@ -110,6 +138,7 @@ export default class ImportExport extends AdminForthPlugin {
         let updatedCount = 0;
 
         await Promise.all(rows.map(async (row) => {
+        this.fixArrayFields(row);
           try {
             if (primaryKeyColumn && row[primaryKeyColumn.name]) {
               const existingRecord = await this.adminforth.resource(this.resourceConfig.resourceId)
@@ -150,7 +179,10 @@ export default class ImportExport extends AdminForthPlugin {
 
         let importedCount = 0;
 
+
         await Promise.all(rows.map(async (row) => {
+          this.fixArrayFields(row);
+          
           try {
             if (primaryKeyColumn && row[primaryKeyColumn.name]) {
               const existingRecord = await this.adminforth.resource(this.resourceConfig.resourceId)
