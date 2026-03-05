@@ -9,8 +9,7 @@
   },
   "homepage": "https://adminforth.dev/docs/tutorial/Plugins/import-export/",
   "scripts": {
-    "build": "tsc && rsync -av --exclude 'node_modules' custom dist/",
-    "prepare": "npm link adminforth"
+    "build": "tsc && rsync -av --exclude 'node_modules' custom dist/"
   },
   "repository": {
     "type": "git",
@@ -26,7 +25,7 @@
   "license": "ISC",
   "description": "CSV import/export plugin for adminforth",
   "peerDependencies": {
-    "adminforth": "next"
+    "adminforth": "^2.24.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.7",
@@ -43,6 +42,7 @@
       [
         "semantic-release-slack-bot",
         {
+          "packageName": "@adminforth/import-export",
           "notifyOnSuccess": true,
           "notifyOnFail": true,
           "slackIcon": ":package:",
