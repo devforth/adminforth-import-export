@@ -22,7 +22,7 @@
     "csv"
   ],
   "author": "devforth",
-  "license": "ISC",
+  "license": "MIT",
   "description": "CSV import/export plugin for adminforth",
   "peerDependencies": {
     "adminforth": "^2.24.0"
