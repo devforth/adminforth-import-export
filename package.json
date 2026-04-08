@@ -25,7 +25,7 @@
   "license": "MIT",
   "description": "CSV import/export plugin for adminforth",
   "peerDependencies": {
-    "adminforth": "^2.24.0"
+    "adminforth": "^2.30.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.7",
