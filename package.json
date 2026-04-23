@@ -21,7 +21,7 @@
     "export",
     "csv"
   ],
-  "author": "devforth",
+  "author": "DevForth (https://devforth.io)",
   "license": "MIT",
   "description": "CSV import/export plugin for adminforth",
   "peerDependencies": {
