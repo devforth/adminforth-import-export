@@ -53,7 +53,6 @@ export default class ImportExport extends AdminForthPlugin {
     server.endpoint({
       method: 'POST',
       path: `/plugin/${this.pluginInstanceId}/export-csv`,
-      noAuth: true,
       handler: async ({ body }) => {
         const { filters, sort } = body;
 
@@ -93,7 +92,6 @@ export default class ImportExport extends AdminForthPlugin {
     server.endpoint({
       method: 'POST',
       path: `/plugin/${this.pluginInstanceId}/import-csv`,
-      noAuth: true,
       handler: async ({ body }) => {
         const { data } = body;
         const columns = this.getColumnNames(data);
@@ -136,7 +134,6 @@ export default class ImportExport extends AdminForthPlugin {
     server.endpoint({
       method: 'POST',
       path: `/plugin/${this.pluginInstanceId}/import-csv-new-only`,
-      noAuth: true,
       handler: async ({ body }) => {
         const { data } = body;
         const columns = this.getColumnNames(data);
@@ -174,7 +171,6 @@ export default class ImportExport extends AdminForthPlugin {
     server.endpoint({
       method: 'POST',
       path: `/plugin/${this.pluginInstanceId}/check-records`,
-      noAuth: true,
       handler: async ({ body }) => {
         const { data } = body as { data: Record<string, unknown[]> };
         const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
