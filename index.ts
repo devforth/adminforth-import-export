@@ -1,5 +1,5 @@
 import { AdminForthPlugin, suggestIfTypo, AdminForthFilterOperators, Filters, AdminForthDataTypes, rejectApiRawFilters } from "adminforth";
-import type { IAdminForth, IHttpServer, AdminForthResourceColumn, AdminForthComponentDeclaration, AdminForthResource } from "adminforth";
+import type { IAdminForth, IHttpServer, AdminForthResourceColumn, AdminForthComponentDeclaration, AdminForthResource, AdminUser } from "adminforth";
 import type { PluginOptions } from './types.js';
 import pLimit from 'p-limit';
 
@@ -8,6 +8,7 @@ export default class ImportExport extends AdminForthPlugin {
   emailField: AdminForthResourceColumn;
   authResourceId: string;
   adminforth: IAdminForth;
+  auditLogPlugin: Record<string, any> | undefined;
   
 
   constructor(options: PluginOptions) {
@@ -31,6 +32,29 @@ export default class ImportExport extends AdminForthPlugin {
       }
     }
     return errors;
+  }
+
+  private tryToAuditLogAction(actionName: 'import' | 'export', actionDetails: string, adminUser: AdminUser, headers?: Record<string, string> ) {
+    if (!this.auditLogPlugin) {
+      console.warn('AuditLogPlugin not found, skipping audit log for action:', actionDetails);
+      return;
+    }
+    try {
+      this.auditLogPlugin.logCustomAction({
+        resourceId: this.resourceConfig.resourceId,
+        recordId: null,
+        actionId: actionName,
+        oldData: null,
+        data: {
+          details: actionDetails,
+
+        },
+        user: adminUser,
+        headers: headers || {},
+      });
+    } catch (e) {
+      console.error('Failed to log action to AuditLogPlugin:', e);
+    }
   }
 
   async modifyResourceConfig(adminforth: IAdminForth, resourceConfig: AdminForthResource) {
@@ -61,6 +85,11 @@ export default class ImportExport extends AdminForthPlugin {
   
   validateConfigAfterDiscover(adminforth: IAdminForth, resourceConfig: AdminForthResource) {
     // optional method where you can safely check field types after database discovery was performed
+    try {
+      this.auditLogPlugin = this.adminforth.getPluginByClassName('AuditLogPlugin');
+    } catch (e) {
+      console.warn('Failed to get AuditLogPlugin for imort-export plugin. Audit logging will be skipped.');
+    }
   }
 
   instanceUniqueRepresentation(pluginOptions: any) : string {
@@ -73,7 +102,7 @@ export default class ImportExport extends AdminForthPlugin {
     server.endpoint({
       method: 'POST',
       path: `/plugin/${this.pluginInstanceId}/export-csv`,
-      handler: async ({ body }) => {
+      handler: async ({ body, adminUser, headers }) => {
         const { filters, sort } = body;
         const rawFilterError = rejectApiRawFilters(body.filters);
         if (rawFilterError) {
@@ -103,6 +132,8 @@ export default class ImportExport extends AdminForthPlugin {
           return columns.map((col) => row[col.name]);
         });
 
+        this.tryToAuditLogAction('export', `Export CSV with filters: ${JSON.stringify(filters)} and sort: ${JSON.stringify(sort)}. Total records: ${rows.length}`, adminUser, headers);
+
         return { 
           data: { fields, data: rows }, 
           columnsToForceQuote, 
@@ -117,6 +148,7 @@ export default class ImportExport extends AdminForthPlugin {
       path: `/plugin/${this.pluginInstanceId}/import-csv`,
       handler: async ({ body, adminUser, query, headers, cookies, requestUrl, response }) => {
         const { data } = body;
+        this.tryToAuditLogAction('import', `Import CSV with ${Object.keys(data).length} columns`, adminUser, headers);
         const columns = this.getColumnNames(data);
         const { errors, resourceColumns } = this.validateColumns(columns);
         const resource = this.adminforth.config.resources.find(r => r.resourceId === this.resourceConfig.resourceId);
@@ -184,6 +216,7 @@ export default class ImportExport extends AdminForthPlugin {
       path: `/plugin/${this.pluginInstanceId}/import-csv-new-only`,
       handler: async ({ body, adminUser, query, headers, cookies, requestUrl, response }) => {
         const { data } = body;
+        this.tryToAuditLogAction('import', `Import CSV (new only) with ${Object.keys(data).length} columns`, adminUser, headers);
         const columns = this.getColumnNames(data);
         const resource = this.adminforth.config.resources.find(r => r.resourceId === this.resourceConfig.resourceId);
         const { errors, resourceColumns } = this.validateColumns(columns);
