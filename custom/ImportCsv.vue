@@ -116,7 +116,7 @@ async function postData(data: Record<string, string[]>, skipDuplicates: boolean 
     adminforth.list.refresh();
   }
   adminforth.alert({
-    message: `Imported ${resp.importedCount || 0} records. Updated ${resp.updatedCount || 0} records. ${resp.errors?.length ? `Errors: ${resp.errors.join(', ')}` : ''}`,
+    message: `Imported ${resp.importedCount || 0} records. Updated ${resp.updatedCount || 0} records. ${resp.errors?.length ? `First error: ${resp.errors[0]}` : ''}`,
     variant: resp.errors?.length ? (
       resp.importedCount ? 'warning' : 'danger'
     ) : 'success'
@@ -138,7 +138,7 @@ async function postDataNewOnly(data: Record<string, string[]>) {
     adminforth.list.refresh();
   }
   adminforth.alert({
-    message: `Imported ${resp.importedCount || 0} records. ${resp.errors?.length ? `Errors: ${resp.errors.join(', ')}` : ''}`,
+    message: `Imported ${resp.importedCount || 0} records. ${resp.errors?.length ? `First error: ${resp.errors[0]}` : ''}`,
     variant: resp.errors?.length ? 'warning' : 'success'
   });
 
