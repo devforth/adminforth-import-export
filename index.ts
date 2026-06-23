@@ -1,4 +1,4 @@
-import { AdminForthPlugin, suggestIfTypo, AdminForthFilterOperators, Filters, AdminForthDataTypes, rejectApiRawFilters } from "adminforth";
+import { AdminForthPlugin, suggestIfTypo, AdminForthFilterOperators, Filters, AdminForthDataTypes, rejectApiRawFilters, interpretResource, ActionCheckSource, AllowedActionsEnum } from "adminforth";
 import type { IAdminForth, IHttpServer, AdminForthResourceColumn, AdminForthComponentDeclaration, AdminForthResource, AdminUser } from "adminforth";
 import type { PluginOptions } from './types.js';
 import pLimit from 'p-limit';
@@ -57,6 +57,31 @@ export default class ImportExport extends AdminForthPlugin {
     }
   }
 
+  private async ensureAnyAllowed(
+    adminUser: AdminUser,
+    checks: { source: ActionCheckSource; action: AllowedActionsEnum }[],
+    meta: Record<string, unknown> = {}
+  ): Promise<{ ok: boolean; error?: string }> {
+    for (const { source, action } of checks) {
+      const { allowedActions } = await interpretResource(
+        adminUser,
+        this.resourceConfig,
+        meta,
+        source,
+        this.adminforth
+      );
+
+      if (allowedActions[action] === true) {
+        return { ok: true };
+      }
+    }
+
+    return {
+      ok: false,
+      error: 'Action is not allowed',
+    };
+  }
+
   async modifyResourceConfig(adminforth: IAdminForth, resourceConfig: AdminForthResource) {
     super.modifyResourceConfig(adminforth, resourceConfig);
     if (!resourceConfig.options.pageInjections) {
@@ -104,6 +129,17 @@ export default class ImportExport extends AdminForthPlugin {
       path: `/plugin/${this.pluginInstanceId}/export-csv`,
       handler: async ({ body, adminUser, headers }) => {
         const { filters, sort } = body;
+        const access = await this.ensureAnyAllowed(
+          adminUser,
+          [
+            { source: ActionCheckSource.ListRequest, action: AllowedActionsEnum.list },
+            { source: ActionCheckSource.ShowRequest, action: AllowedActionsEnum.show },
+          ],
+          { requestBody: body }
+        );
+        if (!access.ok) {
+          return { ok: false, error: access.error };
+        }
         const rawFilterError = rejectApiRawFilters(body.filters);
         if (rawFilterError) {
           return rawFilterError;
@@ -148,7 +184,17 @@ export default class ImportExport extends AdminForthPlugin {
       path: `/plugin/${this.pluginInstanceId}/import-csv`,
       handler: async ({ body, adminUser, query, headers, cookies, requestUrl, response }) => {
         const { data } = body;
-        this.tryToAuditLogAction('import', `Import CSV with ${Object.keys(data).length} columns`, adminUser, headers);
+        const createEditAccess = await this.ensureAnyAllowed(
+          adminUser,
+          [
+            { source: ActionCheckSource.CreateRequest, action: AllowedActionsEnum.create },
+            { source: ActionCheckSource.EditRequest, action: AllowedActionsEnum.edit }
+          ],
+          { requestBody: body }
+        );
+        if (!createEditAccess.ok) {
+          return { ok: false, error: createEditAccess.error };
+        }
         const columns = this.getColumnNames(data);
         const { errors, resourceColumns } = this.validateColumns(columns);
         const resource = this.adminforth.config.resources.find(r => r.resourceId === this.resourceConfig.resourceId);
@@ -160,6 +206,7 @@ export default class ImportExport extends AdminForthPlugin {
         const rows = this.buildRowsFromData(data, columns, resourceColumns, { coerceTypes: true });
 
         console.log('Prepared rows for import:', rows);
+        this.tryToAuditLogAction('import', `Import CSV with ${Object.keys(data).length} columns`, adminUser, headers);
 
         let importedCount = 0;
         let updatedCount = 0;
@@ -216,7 +263,14 @@ export default class ImportExport extends AdminForthPlugin {
       path: `/plugin/${this.pluginInstanceId}/import-csv-new-only`,
       handler: async ({ body, adminUser, query, headers, cookies, requestUrl, response }) => {
         const { data } = body;
-        this.tryToAuditLogAction('import', `Import CSV (new only) with ${Object.keys(data).length} columns`, adminUser, headers);
+        const access = await this.ensureAnyAllowed(
+          adminUser,
+          [{ source: ActionCheckSource.CreateRequest, action: AllowedActionsEnum.create }],
+          { requestBody: body }
+        );
+        if (!access.ok) {
+          return { ok: false, error: access.error };
+        }
         const columns = this.getColumnNames(data);
         const resource = this.adminforth.config.resources.find(r => r.resourceId === this.resourceConfig.resourceId);
         const { errors, resourceColumns } = this.validateColumns(columns);
@@ -226,6 +280,7 @@ export default class ImportExport extends AdminForthPlugin {
 
         const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
         const rows = this.buildRowsFromData(data, columns, resourceColumns, { coerceTypes: true });
+        this.tryToAuditLogAction('import', `Import CSV (new only) with ${Object.keys(data).length} columns`, adminUser, headers);
 
         let importedCount = 0;
         const limit = pLimit(100);
@@ -264,7 +319,18 @@ export default class ImportExport extends AdminForthPlugin {
     server.endpoint({
       method: 'POST',
       path: `/plugin/${this.pluginInstanceId}/check-records`,
-      handler: async ({ body }) => {
+      handler: async ({ body, adminUser }) => {
+        const access = await this.ensureAnyAllowed(
+          adminUser,
+          [
+            { source: ActionCheckSource.ListRequest, action: AllowedActionsEnum.list },
+            { source: ActionCheckSource.ShowRequest, action: AllowedActionsEnum.show },
+          ],
+          { requestBody: body }
+        );
+        if (!access.ok) {
+          return { ok: false, error: access.error };
+        }
         const { data } = body as { data: Record<string, unknown[]> };
         const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
         const columns = this.getColumnNames(data);
