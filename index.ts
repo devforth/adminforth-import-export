@@ -1,16 +1,36 @@
-import { AdminForthPlugin, suggestIfTypo, AdminForthFilterOperators, Filters, AdminForthDataTypes } from "adminforth";
+import { AdminForthPlugin, suggestIfTypo, AdminForthFilterOperators, Filters, AdminForthDataTypes, rejectApiRawFilters } from "adminforth";
 import type { IAdminForth, IHttpServer, AdminForthResourceColumn, AdminForthComponentDeclaration, AdminForthResource } from "adminforth";
 import type { PluginOptions } from './types.js';
+import pLimit from 'p-limit';
 
 export default class ImportExport extends AdminForthPlugin {
   options: PluginOptions;
   emailField: AdminForthResourceColumn;
   authResourceId: string;
   adminforth: IAdminForth;
+  
 
   constructor(options: PluginOptions) {
     super(options, import.meta.url);
     this.options = options;
+  }
+
+  private isRowValid(row: Record<string, unknown>): string[] {
+    let errors = [];
+    for (const col of Object.keys(row)) {
+      const resourceCol = this.resourceConfig.columns.find(c => c.name === col);
+      if (!resourceCol) {
+        errors.push(`Column '${col}' not found in resource configuration.`);
+        continue;
+      }    
+      if (resourceCol.backendOnly) {
+        errors.push(`Column '${col}' is backend only and cannot be imported.`);
+      }
+      if (resourceCol.enum && !resourceCol.enum.some(e => e.value === row[col])) {
+        errors.push(`Column '${col}' has an enum of [${resourceCol.enum.map(e => e.label).join(', ')}] but got value '${row[col]}'.`);
+      }
+    }
+    return errors;
   }
 
   async modifyResourceConfig(adminforth: IAdminForth, resourceConfig: AdminForthResource) {
@@ -55,7 +75,10 @@ export default class ImportExport extends AdminForthPlugin {
       path: `/plugin/${this.pluginInstanceId}/export-csv`,
       handler: async ({ body }) => {
         const { filters, sort } = body;
-
+        const rawFilterError = rejectApiRawFilters(body.filters);
+        if (rawFilterError) {
+          return rawFilterError;
+        }
         const data = await this.adminforth.connectors[this.resourceConfig.dataSource].getData({
           resource: this.resourceConfig,
           limit: 1e6,
@@ -66,7 +89,7 @@ export default class ImportExport extends AdminForthPlugin {
         });
 
         // prepare data for PapaParse unparse
-        const columns = this.resourceConfig.columns.filter((col) => !col.virtual);
+        const columns = this.resourceConfig.columns.filter((col) => !col.virtual && !col.backendOnly);
 
         const columnsToForceQuote = columns.map(col => {
           return col.type !== AdminForthDataTypes.FLOAT 
@@ -92,10 +115,12 @@ export default class ImportExport extends AdminForthPlugin {
     server.endpoint({
       method: 'POST',
       path: `/plugin/${this.pluginInstanceId}/import-csv`,
-      handler: async ({ body }) => {
+      handler: async ({ body, adminUser, query, headers, cookies, requestUrl, response }) => {
         const { data } = body;
         const columns = this.getColumnNames(data);
         const { errors, resourceColumns } = this.validateColumns(columns);
+        const resource = this.adminforth.config.resources.find(r => r.resourceId === this.resourceConfig.resourceId);
+
         if (errors.length > 0) {
           return { ok: false, errors };
         }
@@ -106,26 +131,49 @@ export default class ImportExport extends AdminForthPlugin {
 
         let importedCount = 0;
         let updatedCount = 0;
+        const limit = pLimit(100);
 
-        await Promise.all(rows.map(async (row) => {
+        await Promise.all(rows.map((row) => limit(async () => {
           try {
-            if (primaryKeyColumn && row[primaryKeyColumn.name]) {
+            const rowErrors = await this.isRowValid(row);
+            if (rowErrors.length > 0) {
+              errors.push(...rowErrors);
+              return;
+            }
+            const recordId = primaryKeyColumn ? row[primaryKeyColumn.name] as string : undefined;
+            if (primaryKeyColumn && recordId) {
               const existingRecord = await this.adminforth.resource(this.resourceConfig.resourceId)
-                .list([Filters.EQ(primaryKeyColumn.name, row[primaryKeyColumn.name])]);
+                .list([Filters.EQ(primaryKeyColumn.name, recordId)]);
               
               if (existingRecord.length > 0) {
-                await this.adminforth.resource(this.resourceConfig.resourceId)
-                  .update(row[primaryKeyColumn.name], row);
+                const connector = this.adminforth.connectors[resource.dataSource];
+                const oldRecord = await connector.getRecordByPrimaryKey(resource, recordId)
+                if (!oldRecord) {
+                    const primaryKeyColumn = resource.columns.find((col) => col.primaryKey);
+                    return { error: `Record with ${primaryKeyColumn.name} ${recordId} not found` };
+                }
+                const { error } = await this.adminforth.updateResourceRecord({ 
+                  resource, updates: row, adminUser, oldRecord, recordId, response, 
+                  extra: { body, query, headers, cookies, requestUrl, response } 
+                });
+                if (error) {
+                  return { error };
+                }
                 updatedCount++;
                 return;
               }
             }
-            await this.adminforth.resource(this.resourceConfig.resourceId).create(row);
+            await this.adminforth.createResourceRecord({
+              resource: resource,
+              record: row,
+              adminUser: adminUser,
+              extra: { body, query, headers, cookies, requestUrl, response } 
+            });            
             importedCount++;
           } catch (e) {
             errors.push(e.message);
           }
-        }));
+        })));
 
         return { ok: true, importedCount, updatedCount, errors };
       }
@@ -134,9 +182,10 @@ export default class ImportExport extends AdminForthPlugin {
     server.endpoint({
       method: 'POST',
       path: `/plugin/${this.pluginInstanceId}/import-csv-new-only`,
-      handler: async ({ body }) => {
+      handler: async ({ body, adminUser, query, headers, cookies, requestUrl, response }) => {
         const { data } = body;
         const columns = this.getColumnNames(data);
+        const resource = this.adminforth.config.resources.find(r => r.resourceId === this.resourceConfig.resourceId);
         const { errors, resourceColumns } = this.validateColumns(columns);
         if (errors.length > 0) {
           return { ok: false, errors };
@@ -146,9 +195,15 @@ export default class ImportExport extends AdminForthPlugin {
         const rows = this.buildRowsFromData(data, columns, resourceColumns, { coerceTypes: true });
 
         let importedCount = 0;
+        const limit = pLimit(100);
 
-        await Promise.all(rows.map(async (row) => {
+        await Promise.all(rows.map((row) => limit(async () => {
           try {
+            const rowErrors = await this.isRowValid(row);
+            if (rowErrors.length > 0) {
+              errors.push(...rowErrors);
+              return;
+            }
             if (primaryKeyColumn && row[primaryKeyColumn.name]) {
               const existingRecord = await this.adminforth.resource(this.resourceConfig.resourceId)
                 .list([Filters.EQ(primaryKeyColumn.name, row[primaryKeyColumn.name])]);
@@ -157,12 +212,17 @@ export default class ImportExport extends AdminForthPlugin {
                 return;
               }
             }
-            await this.adminforth.resource(this.resourceConfig.resourceId).create(row);
+            await this.adminforth.createResourceRecord({
+              resource: resource,
+              record: row,
+              adminUser: adminUser,
+              extra: { body, query, headers, cookies, requestUrl, response } 
+            });
             importedCount++;
           } catch (e) {
             errors.push(e.message);
           }
-        }));
+        })));
 
         return { ok: true, importedCount, errors };
       }
