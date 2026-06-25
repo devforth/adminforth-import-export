@@ -16,8 +16,8 @@ importers:
         specifier: ^22.10.7
         version: 22.19.13
       adminforth:
-        specifier: ^3.4.0
-        version: 3.4.0(@adminforth/connector-qdrant@1.0.4)(@types/node@22.19.13)
+        specifier: ^3.6.2
+        version: 3.6.2(@adminforth/connector-qdrant@1.0.4)(@types/node@22.19.13)
       semantic-release:
         specifier: ^24.2.1
         version: 24.2.9(typescript@5.9.3)
@@ -391,8 +391,8 @@ packages:
     resolution: {integrity: sha512-PYAthTa2m2VKxuvSD3DPC/Gy+U+sOA1LAuT8mkmRuvw+NACSaeXEQ+NHcVF7rONl6qcaxV3Uuemwawk+7+SJLw==}
     engines: {node: '>= 0.6'}
 
-  adminforth@3.4.0:
-    resolution: {integrity: sha512-2cr7HQoYbtJQI10S4xVsEOWXjjp0gDD7egaOp9+vsRW19CM4Zw8Me1dSyWd3aqMDzcHOy3C/9ddgpEInGCWxCA==}
+  adminforth@3.6.2:
+    resolution: {integrity: sha512-/HF3s0+6bkxyAqrkmkGxEn+Zvrrv8q3Sr6q55oVmHlcGI3Tamo9z10XvRRsS+KrBVUzt53BxFRmA2Z2EKjRiTg==}
     hasBin: true
     peerDependencies:
       '@adminforth/connector-clickhouse': ^1.0.4
@@ -684,9 +684,6 @@ packages:
 
   dateformat@4.6.3:
     resolution: {integrity: sha512-2P0p0pFGzHS5EMnhdxQi7aJN+iMheud0UhG4dlE1DLAlvL8JHjJJTX/CSm4JXwV0Ka5nGk3zC5mcb5bUQUxxMA==}
-
-  dayjs@1.11.19:
-    resolution: {integrity: sha512-t5EcLVS6QPBNqM2z8fakk/NKel+Xzshgt8FFKAn+qwlD1pzZWxh0nVCrvFK7ZDb6XucZeF9z8C7CBWTRIVApAw==}
 
   dayjs@1.11.21:
     resolution: {integrity: sha512-98IT+HOahAisibz/yjKbzuOBwYcjJ7BCLPzARyHiyEBmRz4fatF+KPJszEHXsGYjUG234aH/cOjW1wwTbKUZlA==}
@@ -2326,10 +2323,10 @@ packages:
 
 snapshots:
 
-  '@adminforth/connector-qdrant@1.0.4(adminforth@3.4.0)(typescript@5.9.3)':
+  '@adminforth/connector-qdrant@1.0.4(adminforth@3.6.2)(typescript@5.9.3)':
     dependencies:
       '@qdrant/js-client-rest': 1.18.0(typescript@5.9.3)
-      adminforth: 3.4.0(@adminforth/connector-qdrant@1.0.4)(@types/node@22.19.13)
+      adminforth: 3.6.2(@adminforth/connector-qdrant@1.0.4)(@types/node@22.19.13)
       dayjs: 1.11.21
     transitivePeerDependencies:
       - typescript
@@ -2734,9 +2731,9 @@ snapshots:
       mime-types: 2.1.35
       negotiator: 0.6.3
 
-  adminforth@3.4.0(@adminforth/connector-qdrant@1.0.4)(@types/node@22.19.13):
+  adminforth@3.6.2(@adminforth/connector-qdrant@1.0.4)(@types/node@22.19.13):
     dependencies:
-      '@adminforth/connector-qdrant': 1.0.4(adminforth@3.4.0)(typescript@5.9.3)
+      '@adminforth/connector-qdrant': 1.0.4(adminforth@3.6.2)(typescript@5.9.3)
       '@babel/parser': 7.29.0
       '@faker-js/faker': 9.9.0
       '@inquirer/prompts': 7.10.1(@types/node@22.19.13)
@@ -2748,7 +2745,7 @@ snapshots:
       bson: 7.2.0
       chalk: 5.6.2
       connection-string: 4.4.0
-      dayjs: 1.11.19
+      dayjs: 1.11.21
       dotenv: 16.6.1
       esm: 3.2.25
       execa: 9.6.1
@@ -3040,8 +3037,6 @@ snapshots:
   data-uri-to-buffer@4.0.1: {}
 
   dateformat@4.6.3: {}
-
-  dayjs@1.11.19: {}
 
   dayjs@1.11.21: {}
 
@@ -3580,7 +3575,7 @@ snapshots:
 
   launder@1.7.1:
     dependencies:
-      dayjs: 1.11.19
+      dayjs: 1.11.21
 
   lines-and-columns@1.2.4: {}
 
