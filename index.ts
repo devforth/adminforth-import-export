@@ -129,6 +129,9 @@ export default class ImportExport extends AdminForthPlugin {
       path: `/plugin/${this.pluginInstanceId}/export-csv`,
       handler: async ({ body, adminUser, headers }) => {
         const { filters, sort } = body;
+        if (!filters || !sort) {
+          return { ok: false, error: 'Missing filters or sort in request body' };
+        }
         const access = await this.ensureAnyAllowed(
           adminUser,
           [
@@ -184,6 +187,9 @@ export default class ImportExport extends AdminForthPlugin {
       path: `/plugin/${this.pluginInstanceId}/import-csv`,
       handler: async ({ body, adminUser, query, headers, cookies, requestUrl, response }) => {
         const { data } = body;
+        if (!data || typeof data !== 'object') {
+          return { ok: false, error: 'Invalid data format. Expected an object with column names as keys and arrays of values as values.' };
+        }
         const createEditAccess = await this.ensureAnyAllowed(
           adminUser,
           [
@@ -263,6 +269,9 @@ export default class ImportExport extends AdminForthPlugin {
       path: `/plugin/${this.pluginInstanceId}/import-csv-new-only`,
       handler: async ({ body, adminUser, query, headers, cookies, requestUrl, response }) => {
         const { data } = body;
+        if (!data || typeof data !== 'object') {
+          return { ok: false, error: 'Invalid data format. Expected an object with column names as keys and arrays of values as values.' };
+        }
         const access = await this.ensureAnyAllowed(
           adminUser,
           [{ source: ActionCheckSource.CreateRequest, action: AllowedActionsEnum.create }],
