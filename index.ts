@@ -137,13 +137,16 @@ export default class ImportExport extends AdminForthPlugin {
     schema: z.ZodType<T>,
     body: unknown,
     response: { setStatus: (code: number, message: string) => void },
-  ): T | null {
+  ): { ok: true; data: T } | { ok: false; error: { error: string; details: unknown } } {
     const parsed = schema.safeParse(body ?? {});
     if (!parsed.success) {
-      response.setStatus(422, parsed.error.message);
-      return null;
+      response.setStatus(400, '');
+      return {
+        ok: false,
+        error: { error: 'Request body validation failed', details: parsed.error.issues },
+      };
     }
-    return parsed.data;
+    return { ok: true, data: parsed.data };
   }
 
   setupEndpoints(server: IHttpServer) {
@@ -151,8 +154,9 @@ export default class ImportExport extends AdminForthPlugin {
       method: 'POST',
       path: `/plugin/${this.pluginInstanceId}/export-csv`,
       handler: async ({ body, adminUser, headers, response }) => {
-        const payload = this.parseBody(exportCsvBodySchema, body, response);
-        if (!payload) return;
+        const parsed = this.parseBody(exportCsvBodySchema, body, response);
+        if ('error' in parsed) return parsed.error;
+        const payload = parsed.data;
         const { filters, sort } = payload;
         if (!filters || !sort) {
           return { ok: false, error: 'Missing filters or sort in request body' };
@@ -211,8 +215,9 @@ export default class ImportExport extends AdminForthPlugin {
       method: 'POST',
       path: `/plugin/${this.pluginInstanceId}/import-csv`,
       handler: async ({ body, adminUser, query, headers, cookies, requestUrl, response }) => {
-        const payload = this.parseBody(importCsvBodySchema, body, response);
-        if (!payload) return;
+        const parsed = this.parseBody(importCsvBodySchema, body, response);
+        if ('error' in parsed) return parsed.error;
+        const payload = parsed.data;
         const { data } = payload;
         if (!data || typeof data !== 'object') {
           return { ok: false, error: 'Invalid data format. Expected an object with column names as keys and arrays of values as values.' };
@@ -295,8 +300,9 @@ export default class ImportExport extends AdminForthPlugin {
       method: 'POST',
       path: `/plugin/${this.pluginInstanceId}/import-csv-new-only`,
       handler: async ({ body, adminUser, query, headers, cookies, requestUrl, response }) => {
-        const payload = this.parseBody(importCsvBodySchema, body, response);
-        if (!payload) return;
+        const parsed = this.parseBody(importCsvBodySchema, body, response);
+        if ('error' in parsed) return parsed.error;
+        const payload = parsed.data;
         const { data } = payload;
         if (!data || typeof data !== 'object') {
           return { ok: false, error: 'Invalid data format. Expected an object with column names as keys and arrays of values as values.' };
@@ -358,8 +364,9 @@ export default class ImportExport extends AdminForthPlugin {
       method: 'POST',
       path: `/plugin/${this.pluginInstanceId}/check-records`,
       handler: async ({ body, adminUser, response }) => {
-        const payload = this.parseBody(importCsvBodySchema, body, response);
-        if (!payload) return;
+        const parsed = this.parseBody(importCsvBodySchema, body, response);
+        if ('error' in parsed) return parsed.error;
+        const payload = parsed.data;
         const access = await this.ensureAnyAllowed(
           adminUser,
           [
