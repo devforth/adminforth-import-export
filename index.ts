@@ -1,4 +1,4 @@
-import { AdminForthPlugin, suggestIfTypo, AdminForthFilterOperators, Filters, AdminForthDataTypes, rejectApiRawFilters, interpretResource, ActionCheckSource, AllowedActionsEnum } from "adminforth";
+import { AdminForthPlugin, parseBody, suggestIfTypo, AdminForthFilterOperators, Filters, AdminForthDataTypes, rejectApiRawFilters, interpretResource, ActionCheckSource, AllowedActionsEnum } from "adminforth";
 import type { IAdminForth, IHttpServer, AdminForthResourceColumn, AdminForthComponentDeclaration, AdminForthResource, AdminUser } from "adminforth";
 import type { PluginOptions } from './types.js';
 import pLimit from 'p-limit';
@@ -133,28 +133,12 @@ export default class ImportExport extends AdminForthPlugin {
     return `${this.pluginInstanceId}`;
   }
 
-  private parseBody<T>(
-    schema: z.ZodType<T>,
-    body: unknown,
-    response: { setStatus: (code: number, message: string) => void },
-  ): { ok: true; data: T } | { ok: false; error: { error: string; details: unknown } } {
-    const parsed = schema.safeParse(body ?? {});
-    if (!parsed.success) {
-      response.setStatus(400, '');
-      return {
-        ok: false,
-        error: { error: 'Request body validation failed', details: parsed.error.issues },
-      };
-    }
-    return { ok: true, data: parsed.data };
-  }
-
   setupEndpoints(server: IHttpServer) {
     server.endpoint({
       method: 'POST',
       path: `/plugin/${this.pluginInstanceId}/export-csv`,
       handler: async ({ body, adminUser, headers, response }) => {
-        const parsed = this.parseBody(exportCsvBodySchema, body, response);
+        const parsed = parseBody(exportCsvBodySchema, body, response);
         if ('error' in parsed) return parsed.error;
         const payload = parsed.data;
         const { filters, sort } = payload;
@@ -215,7 +199,7 @@ export default class ImportExport extends AdminForthPlugin {
       method: 'POST',
       path: `/plugin/${this.pluginInstanceId}/import-csv`,
       handler: async ({ body, adminUser, query, headers, cookies, requestUrl, response }) => {
-        const parsed = this.parseBody(importCsvBodySchema, body, response);
+        const parsed = parseBody(importCsvBodySchema, body, response);
         if ('error' in parsed) return parsed.error;
         const payload = parsed.data;
         const { data } = payload;
@@ -300,7 +284,7 @@ export default class ImportExport extends AdminForthPlugin {
       method: 'POST',
       path: `/plugin/${this.pluginInstanceId}/import-csv-new-only`,
       handler: async ({ body, adminUser, query, headers, cookies, requestUrl, response }) => {
-        const parsed = this.parseBody(importCsvBodySchema, body, response);
+        const parsed = parseBody(importCsvBodySchema, body, response);
         if ('error' in parsed) return parsed.error;
         const payload = parsed.data;
         const { data } = payload;
@@ -364,7 +348,7 @@ export default class ImportExport extends AdminForthPlugin {
       method: 'POST',
       path: `/plugin/${this.pluginInstanceId}/check-records`,
       handler: async ({ body, adminUser, response }) => {
-        const parsed = this.parseBody(importCsvBodySchema, body, response);
+        const parsed = parseBody(importCsvBodySchema, body, response);
         if ('error' in parsed) return parsed.error;
         const payload = parsed.data;
         const access = await this.ensureAnyAllowed(
