@@ -25,11 +25,11 @@
   "license": "MIT",
   "description": "CSV import/export plugin for adminforth",
   "peerDependencies": {
-    "adminforth": "^3.6.21"
+    "adminforth": "^3.7.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.7",
-    "adminforth": "^3.6.21",
+    "adminforth": "^3.7.1",
     "semantic-release": "^24.2.1",
     "semantic-release-slack-bot": "^4.0.2",
     "typescript": "^5.7.3"
@@ -60,7 +60,7 @@
     ]
   },
   "dependencies": {
-    "zod": "^4.3.6",
-    "p-limit": "^7.3.0"
+    "p-limit": "^7.3.0",
+    "zod": "^4.3.6"
   }
 }
