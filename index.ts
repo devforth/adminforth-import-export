@@ -1,7 +1,17 @@
-import { AdminForthPlugin, suggestIfTypo, AdminForthFilterOperators, Filters, AdminForthDataTypes, rejectApiRawFilters, interpretResource, ActionCheckSource, AllowedActionsEnum } from "adminforth";
+import { AdminForthPlugin, parseBody, suggestIfTypo, AdminForthFilterOperators, Filters, AdminForthDataTypes, rejectApiRawFilters, interpretResource, ActionCheckSource, AllowedActionsEnum } from "adminforth";
 import type { IAdminForth, IHttpServer, AdminForthResourceColumn, AdminForthComponentDeclaration, AdminForthResource, AdminUser } from "adminforth";
 import type { PluginOptions } from './types.js';
 import pLimit from 'p-limit';
+import { z } from "zod";
+
+const exportCsvBodySchema = z.object({
+  filters: z.any(),
+  sort: z.any(),
+}).strict();
+
+const importCsvBodySchema = z.object({
+  data: z.record(z.string(), z.array(z.unknown())),
+}).strict();
 
 export default class ImportExport extends AdminForthPlugin {
   options: PluginOptions;
@@ -127,8 +137,11 @@ export default class ImportExport extends AdminForthPlugin {
     server.endpoint({
       method: 'POST',
       path: `/plugin/${this.pluginInstanceId}/export-csv`,
-      handler: async ({ body, adminUser, headers }) => {
-        const { filters, sort } = body;
+      handler: async ({ body, adminUser, headers, response }) => {
+        const parsed = parseBody(exportCsvBodySchema, body, response);
+        if ('error' in parsed) return parsed.error;
+        const payload = parsed.data;
+        const { filters, sort } = payload;
         if (!filters || !sort) {
           return { ok: false, error: 'Missing filters or sort in request body' };
         }
@@ -186,7 +199,10 @@ export default class ImportExport extends AdminForthPlugin {
       method: 'POST',
       path: `/plugin/${this.pluginInstanceId}/import-csv`,
       handler: async ({ body, adminUser, query, headers, cookies, requestUrl, response }) => {
-        const { data } = body;
+        const parsed = parseBody(importCsvBodySchema, body, response);
+        if ('error' in parsed) return parsed.error;
+        const payload = parsed.data;
+        const { data } = payload;
         if (!data || typeof data !== 'object') {
           return { ok: false, error: 'Invalid data format. Expected an object with column names as keys and arrays of values as values.' };
         }
@@ -268,7 +284,10 @@ export default class ImportExport extends AdminForthPlugin {
       method: 'POST',
       path: `/plugin/${this.pluginInstanceId}/import-csv-new-only`,
       handler: async ({ body, adminUser, query, headers, cookies, requestUrl, response }) => {
-        const { data } = body;
+        const parsed = parseBody(importCsvBodySchema, body, response);
+        if ('error' in parsed) return parsed.error;
+        const payload = parsed.data;
+        const { data } = payload;
         if (!data || typeof data !== 'object') {
           return { ok: false, error: 'Invalid data format. Expected an object with column names as keys and arrays of values as values.' };
         }
@@ -328,7 +347,10 @@ export default class ImportExport extends AdminForthPlugin {
     server.endpoint({
       method: 'POST',
       path: `/plugin/${this.pluginInstanceId}/check-records`,
-      handler: async ({ body, adminUser }) => {
+      handler: async ({ body, adminUser, response }) => {
+        const parsed = parseBody(importCsvBodySchema, body, response);
+        if ('error' in parsed) return parsed.error;
+        const payload = parsed.data;
         const access = await this.ensureAnyAllowed(
           adminUser,
           [
@@ -340,7 +362,7 @@ export default class ImportExport extends AdminForthPlugin {
         if (!access.ok) {
           return { ok: false, error: access.error };
         }
-        const { data } = body as { data: Record<string, unknown[]> };
+        const { data } = payload;
         const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
         const columns = this.getColumnNames(data);
         const rows = this.buildRowsFromData(data, columns, undefined, { coerceTypes: false });
