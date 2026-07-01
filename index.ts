@@ -168,7 +168,13 @@ export default class ImportExport extends AdminForthPlugin {
         const fields = columns.map((col) => col.name);
 
         const rows = data.data.map((row) => {
-          return columns.map((col) => row[col.name]);
+          return columns.map((col) => {
+            const value = row[col.name];
+            if (col.type === AdminForthDataTypes.JSON || col.isArray?.enabled) {
+              return value == null ? value : JSON.stringify(value);
+            }
+            return value;
+          });
         });
 
         this.tryToAuditLogAction('export', `Export CSV with filters: ${JSON.stringify(filters)} and sort: ${JSON.stringify(sort)}. Total records: ${rows.length}`, adminUser, headers);
@@ -444,6 +450,17 @@ export default class ImportExport extends AdminForthPlugin {
         return val.toLowerCase() === 'true' || val === '1';
       }
       return val === 1 || val === true;
+    }
+
+    if (resourceCol.type === AdminForthDataTypes.JSON || resourceCol.isArray?.enabled) {
+      if (typeof val === 'string') {
+        try {
+          return JSON.parse(val);
+        } catch {
+          return val;
+        }
+      }
+      return val;
     }
 
     return val;
