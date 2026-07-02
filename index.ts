@@ -7,6 +7,7 @@ import { z } from "zod";
 const exportCsvBodySchema = z.object({
   filters: z.any(),
   sort: z.any(),
+  selectedIds: z.array(z.any()).optional(),
 }).strict();
 
 const importCsvBodySchema = z.object({
@@ -105,10 +106,7 @@ export default class ImportExport extends AdminForthPlugin {
     }
     (resourceConfig.options.pageInjections.list.threeDotsDropdownItems as AdminForthComponentDeclaration[]).push({
       file: this.componentPath('ExportCsv.vue'),
-      meta: { pluginInstanceId: this.pluginInstanceId, select: 'all' }
-    }, {
-      file: this.componentPath('ExportCsv.vue'),
-      meta: { pluginInstanceId: this.pluginInstanceId, select: 'filtered' }
+      meta: { pluginInstanceId: this.pluginInstanceId }
     }, {
       file: this.componentPath('ImportCsv.vue'),
       meta: { pluginInstanceId: this.pluginInstanceId }
@@ -141,7 +139,7 @@ export default class ImportExport extends AdminForthPlugin {
         const parsed = parseBody(exportCsvBodySchema, body, response);
         if ('error' in parsed) return parsed.error;
         const payload = parsed.data;
-        const { filters, sort } = payload;
+        const { filters, sort, selectedIds } = payload;
         if (!filters || !sort) {
           return { ok: false, error: 'Missing filters or sort in request body' };
         }
@@ -160,11 +158,25 @@ export default class ImportExport extends AdminForthPlugin {
         if (rawFilterError) {
           return rawFilterError;
         }
+
+        let effectiveFilters = filters;
+        if (Array.isArray(selectedIds) && selectedIds.length > 0) {
+          const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
+          if (!primaryKeyColumn) {
+            return { ok: false, error: 'Cannot export selected records: resource has no primary key' };
+          }
+          effectiveFilters = [{
+            field: primaryKeyColumn.name,
+            operator: AdminForthFilterOperators.IN,
+            value: selectedIds,
+          }];
+        }
+
         const data = await this.adminforth.connectors[this.resourceConfig.dataSource].getData({
           resource: this.resourceConfig,
           limit: 1e6,
           offset: 0,
-          filters: this.adminforth.connectors[this.resourceConfig.dataSource].validateAndNormalizeInputFilters(filters),
+          filters: this.adminforth.connectors[this.resourceConfig.dataSource].validateAndNormalizeInputFilters(effectiveFilters),
           sort,
           getTotals: true,
         });
@@ -190,7 +202,7 @@ export default class ImportExport extends AdminForthPlugin {
           });
         });
 
-        this.tryToAuditLogAction('export', `Export CSV with filters: ${JSON.stringify(filters)} and sort: ${JSON.stringify(sort)}. Total records: ${rows.length}`, adminUser, headers);
+        this.tryToAuditLogAction('export', `Export CSV with filters: ${JSON.stringify(effectiveFilters)} and sort: ${JSON.stringify(sort)}. Total records: ${rows.length}`, adminUser, headers);
 
         return { 
           data: { fields, data: rows }, 
