@@ -1,5 +1,5 @@
 import { AdminForthPlugin, suggestIfTypo, AdminForthFilterOperators, Filters, AdminForthDataTypes, rejectApiRawFilters, interpretResource, ActionCheckSource, AllowedActionsEnum } from "adminforth";
-import type { IAdminForth, IHttpServer, AdminForthResourceColumn, AdminForthComponentDeclaration, AdminForthResource, AdminUser } from "adminforth";
+import type { IAdminForth, IHttpServer, AdminForthResourceColumn, AdminForthComponentDeclaration, AdminForthResource, AdminUser, HttpExtra, IAdminForthHttpResponse } from "adminforth";
 import type { PluginOptions } from './types.js';
 import pLimit from 'p-limit';
 import { z } from "zod";
@@ -136,9 +136,8 @@ export default class ImportExport extends AdminForthPlugin {
       method: 'POST',
       path: `/plugin/${this.pluginInstanceId}/export-csv`,
       request_schema: exportCsvBodySchema,
-      handler: async ({ body, adminUser, headers, response }) => {
-        const payload = body as z.infer<typeof exportCsvBodySchema>;
-        const { filters, sort, selectedIds } = payload;
+      handler: async ({ body, adminUser, headers }) => {
+        const { filters, sort, selectedIds } = body as z.infer<typeof exportCsvBodySchema>;
         if (!filters || !sort) {
           return { ok: false, error: 'Missing filters or sort in request body' };
         }
@@ -171,44 +170,7 @@ export default class ImportExport extends AdminForthPlugin {
           }];
         }
 
-        const data = await this.adminforth.connectors[this.resourceConfig.dataSource].getData({
-          resource: this.resourceConfig,
-          limit: 1e6,
-          offset: 0,
-          filters: this.adminforth.connectors[this.resourceConfig.dataSource].validateAndNormalizeInputFilters(effectiveFilters),
-          sort,
-          getTotals: true,
-        });
-
-        // prepare data for PapaParse unparse
-        const columns = this.resourceConfig.columns.filter((col) => !col.virtual && !col.backendOnly);
-
-        const columnsToForceQuote = columns.map(col => {
-          return col.type !== AdminForthDataTypes.FLOAT 
-            && col.type !== AdminForthDataTypes.INTEGER 
-            && col.type !== AdminForthDataTypes.BOOLEAN;
-        })
-
-        const fields = columns.map((col) => col.name);
-
-        const rows = data.data.map((row) => {
-          return columns.map((col) => {
-            const value = row[col.name];
-            if (col.type === AdminForthDataTypes.JSON || col.isArray?.enabled) {
-              return value == null ? value : JSON.stringify(value);
-            }
-            return value;
-          });
-        });
-
-        this.tryToAuditLogAction('export', `Export CSV with filters: ${JSON.stringify(effectiveFilters)} and sort: ${JSON.stringify(sort)}. Total records: ${rows.length}`, adminUser, headers);
-
-        return { 
-          data: { fields, data: rows }, 
-          columnsToForceQuote, 
-          exportedCount: data.total, 
-          ok: true 
-        };
+        return this.exportCsv(effectiveFilters, sort, { adminUser, headers });
       }
     });
 
@@ -217,8 +179,7 @@ export default class ImportExport extends AdminForthPlugin {
       path: `/plugin/${this.pluginInstanceId}/import-csv`,
       request_schema: importCsvBodySchema,
       handler: async ({ body, adminUser, query, headers, cookies, requestUrl, response }) => {
-        const payload = body as z.infer<typeof importCsvBodySchema>;
-        const { data } = payload;
+        const { data } = body as z.infer<typeof importCsvBodySchema>;
         if (!data || typeof data !== 'object') {
           return { ok: false, error: 'Invalid data format. Expected an object with column names as keys and arrays of values as values.' };
         }
@@ -233,66 +194,12 @@ export default class ImportExport extends AdminForthPlugin {
         if (!createEditAccess.ok) {
           return { ok: false, error: createEditAccess.error };
         }
-        const columns = this.getColumnNames(data);
-        const { errors, resourceColumns } = this.validateColumns(columns);
-        const resource = this.adminforth.config.resources.find(r => r.resourceId === this.resourceConfig.resourceId);
-
-        if (errors.length > 0) {
-          return { ok: false, errors };
-        }
-        const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
-        const rows = this.buildRowsFromData(data, columns, resourceColumns, { coerceTypes: true });
-
-        console.log('Prepared rows for import:', rows);
-        this.tryToAuditLogAction('import', `Import CSV with ${Object.keys(data).length} columns`, adminUser, headers);
-
-        let importedCount = 0;
-        let updatedCount = 0;
-        const limit = pLimit(100);
-
-        await Promise.all(rows.map((row) => limit(async () => {
-          try {
-            const rowErrors = await this.isRowValid(row);
-            if (rowErrors.length > 0) {
-              errors.push(...rowErrors);
-              return;
-            }
-            const recordId = primaryKeyColumn ? row[primaryKeyColumn.name] as string : undefined;
-            if (primaryKeyColumn && recordId) {
-              const existingRecord = await this.adminforth.resource(this.resourceConfig.resourceId)
-                .list([Filters.EQ(primaryKeyColumn.name, recordId)]);
-              
-              if (existingRecord.length > 0) {
-                const connector = this.adminforth.connectors[resource.dataSource];
-                const oldRecord = await connector.getRecordByPrimaryKey(resource, recordId)
-                if (!oldRecord) {
-                    const primaryKeyColumn = resource.columns.find((col) => col.primaryKey);
-                    return { error: `Record with ${primaryKeyColumn.name} ${recordId} not found` };
-                }
-                const { error } = await this.adminforth.updateResourceRecord({ 
-                  resource, updates: row, adminUser, oldRecord, recordId, response, 
-                  extra: { body, query, headers, cookies, requestUrl, response } 
-                });
-                if (error) {
-                  return { error };
-                }
-                updatedCount++;
-                return;
-              }
-            }
-            await this.adminforth.createResourceRecord({
-              resource: resource,
-              record: row,
-              adminUser: adminUser,
-              extra: { body, query, headers, cookies, requestUrl, response } 
-            });            
-            importedCount++;
-          } catch (e) {
-            errors.push(e.message);
-          }
-        })));
-
-        return { ok: true, importedCount, updatedCount, errors };
+        return this.importCsv(data, {
+          adminUser,
+          headers,
+          response,
+          extra: { body, query, headers, cookies, requestUrl, response },
+        });
       }
     });
 
@@ -301,8 +208,7 @@ export default class ImportExport extends AdminForthPlugin {
       path: `/plugin/${this.pluginInstanceId}/import-csv-new-only`,
       request_schema: importCsvBodySchema,
       handler: async ({ body, adminUser, query, headers, cookies, requestUrl, response }) => {
-        const payload = body as z.infer<typeof importCsvBodySchema>;
-        const { data } = payload;
+        const { data } = body as z.infer<typeof importCsvBodySchema>;
         if (!data || typeof data !== 'object') {
           return { ok: false, error: 'Invalid data format. Expected an object with column names as keys and arrays of values as values.' };
         }
@@ -314,48 +220,11 @@ export default class ImportExport extends AdminForthPlugin {
         if (!access.ok) {
           return { ok: false, error: access.error };
         }
-        const columns = this.getColumnNames(data);
-        const resource = this.adminforth.config.resources.find(r => r.resourceId === this.resourceConfig.resourceId);
-        const { errors, resourceColumns } = this.validateColumns(columns);
-        if (errors.length > 0) {
-          return { ok: false, errors };
-        }
-
-        const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
-        const rows = this.buildRowsFromData(data, columns, resourceColumns, { coerceTypes: true });
-        this.tryToAuditLogAction('import', `Import CSV (new only) with ${Object.keys(data).length} columns`, adminUser, headers);
-
-        let importedCount = 0;
-        const limit = pLimit(100);
-
-        await Promise.all(rows.map((row) => limit(async () => {
-          try {
-            const rowErrors = await this.isRowValid(row);
-            if (rowErrors.length > 0) {
-              errors.push(...rowErrors);
-              return;
-            }
-            if (primaryKeyColumn && row[primaryKeyColumn.name]) {
-              const existingRecord = await this.adminforth.resource(this.resourceConfig.resourceId)
-                .list([Filters.EQ(primaryKeyColumn.name, row[primaryKeyColumn.name])]);
-              
-              if (existingRecord.length > 0) {
-                return;
-              }
-            }
-            await this.adminforth.createResourceRecord({
-              resource: resource,
-              record: row,
-              adminUser: adminUser,
-              extra: { body, query, headers, cookies, requestUrl, response } 
-            });
-            importedCount++;
-          } catch (e) {
-            errors.push(e.message);
-          }
-        })));
-
-        return { ok: true, importedCount, errors };
+        return this.importCsvNewOnly(data, {
+          adminUser,
+          headers,
+          extra: { body, query, headers, cookies, requestUrl, response },
+        });
       }
     });
 
@@ -363,8 +232,8 @@ export default class ImportExport extends AdminForthPlugin {
       method: 'POST',
       path: `/plugin/${this.pluginInstanceId}/check-records`,
       request_schema: importCsvBodySchema,
-      handler: async ({ body, adminUser, response }) => {
-        const payload = body as z.infer<typeof importCsvBodySchema>;
+      handler: async ({ body, adminUser }) => {
+        const { data } = body as z.infer<typeof importCsvBodySchema>;
         const access = await this.ensureAnyAllowed(
           adminUser,
           [
@@ -376,32 +245,240 @@ export default class ImportExport extends AdminForthPlugin {
         if (!access.ok) {
           return { ok: false, error: access.error };
         }
-        const { data } = payload;
-        const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
-        const columns = this.getColumnNames(data);
-        const rows = this.buildRowsFromData(data, columns, undefined, { coerceTypes: false });
-
-        const primaryKeys = rows
-          .map(row => primaryKeyColumn ? row[primaryKeyColumn.name] : undefined)
-          .filter(key => key !== undefined && key !== null && key !== '');
-
-        const existingRecords = await this.adminforth
-          .resource(this.resourceConfig.resourceId)
-          .list([{
-            field: primaryKeyColumn.name,
-            operator: AdminForthFilterOperators.IN,
-            value: primaryKeys,
-          }]);
-
-        return {
-          ok: true,
-          total: rows.length,
-          existingCount: existingRecords.length,
-          newCount: rows.length - existingRecords.length,
-        };
-
+        return this.checkRecords(data);
       }
     });
+  }
+
+  /**
+   * Export resource records as CSV-ready data.
+   * Can be called programmatically, e.g. `this.exportCsv(filters, sort)`.
+   */
+  public async exportCsv(
+    filters: any,
+    sort: any,
+    options: { adminUser?: AdminUser; headers?: Record<string, string> } = {}
+  ): Promise<{
+    ok: true;
+    data: { fields: string[]; data: unknown[][] };
+    columnsToForceQuote: boolean[];
+    exportedCount: number;
+  }> {
+    const { adminUser, headers } = options;
+    const connector = this.adminforth.connectors[this.resourceConfig.dataSource];
+    const data = await connector.getData({
+      resource: this.resourceConfig,
+      limit: 1e6,
+      offset: 0,
+      filters: connector.validateAndNormalizeInputFilters(filters),
+      sort,
+      getTotals: true,
+    });
+
+    // prepare data for PapaParse unparse
+    const columns = this.resourceConfig.columns.filter((col) => !col.virtual && !col.backendOnly);
+
+    const columnsToForceQuote = columns.map(col => {
+      return col.type !== AdminForthDataTypes.FLOAT
+        && col.type !== AdminForthDataTypes.INTEGER
+        && col.type !== AdminForthDataTypes.BOOLEAN;
+    });
+
+    const fields = columns.map((col) => col.name);
+
+    const rows = data.data.map((row) => {
+      return columns.map((col) => {
+        const value = row[col.name];
+        if (col.type === AdminForthDataTypes.JSON || col.isArray?.enabled) {
+          return value == null ? value : JSON.stringify(value);
+        }
+        return value;
+      });
+    });
+
+    if (adminUser) {
+      this.tryToAuditLogAction('export', `Export CSV with filters: ${JSON.stringify(filters)} and sort: ${JSON.stringify(sort)}. Total records: ${rows.length}`, adminUser, headers);
+    }
+
+    return {
+      ok: true,
+      data: { fields, data: rows },
+      columnsToForceQuote,
+      exportedCount: data.total,
+    };
+  }
+
+  /**
+   * Import records from column-oriented data, creating new records and updating
+   * existing ones (matched by primary key).
+   * Can be called programmatically, e.g. `this.importCsv(data, { adminUser })`.
+   */
+  public async importCsv(
+    data: Record<string, unknown[]>,
+    options: {
+      adminUser?: AdminUser;
+      headers?: Record<string, string>;
+      extra?: HttpExtra;
+      response?: IAdminForthHttpResponse;
+    } = {}
+  ): Promise<{ ok: boolean; importedCount?: number; updatedCount?: number; errors: string[] }> {
+    const { adminUser, headers, extra, response } = options;
+    const columns = this.getColumnNames(data);
+    const { errors, resourceColumns } = this.validateColumns(columns);
+    const resource = this.adminforth.config.resources.find(r => r.resourceId === this.resourceConfig.resourceId);
+
+    if (errors.length > 0) {
+      return { ok: false, errors };
+    }
+    const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
+    const rows = this.buildRowsFromData(data, columns, resourceColumns, { coerceTypes: true });
+
+    if (adminUser) {
+      this.tryToAuditLogAction('import', `Import CSV with ${Object.keys(data).length} columns`, adminUser, headers);
+    }
+
+    let importedCount = 0;
+    let updatedCount = 0;
+    const limit = pLimit(100);
+
+    await Promise.all(rows.map((row) => limit(async () => {
+      try {
+        const rowErrors = await this.isRowValid(row);
+        if (rowErrors.length > 0) {
+          errors.push(...rowErrors);
+          return;
+        }
+        const recordId = primaryKeyColumn ? row[primaryKeyColumn.name] as string : undefined;
+        if (primaryKeyColumn && recordId) {
+          const existingRecord = await this.adminforth.resource(this.resourceConfig.resourceId)
+            .list([Filters.EQ(primaryKeyColumn.name, recordId)]);
+
+          if (existingRecord.length > 0) {
+            const connector = this.adminforth.connectors[resource.dataSource];
+            const oldRecord = await connector.getRecordByPrimaryKey(resource, recordId);
+            if (!oldRecord) {
+              errors.push(`Record with ${primaryKeyColumn.name} ${recordId} not found`);
+              return;
+            }
+            const { error } = await this.adminforth.updateResourceRecord({
+              resource, updates: row, adminUser, oldRecord, recordId, response,
+              extra,
+            });
+            if (error) {
+              errors.push(error);
+              return;
+            }
+            updatedCount++;
+            return;
+          }
+        }
+        await this.adminforth.createResourceRecord({
+          resource: resource,
+          record: row,
+          adminUser: adminUser,
+          extra,
+        });
+        importedCount++;
+      } catch (e) {
+        errors.push(e.message);
+      }
+    })));
+
+    return { ok: true, importedCount, updatedCount, errors };
+  }
+
+  /**
+   * Import only records that do not already exist (matched by primary key).
+   * Can be called programmatically, e.g. `this.importCsvNewOnly(data, { adminUser })`.
+   */
+  public async importCsvNewOnly(
+    data: Record<string, unknown[]>,
+    options: {
+      adminUser?: AdminUser;
+      headers?: Record<string, string>;
+      extra?: HttpExtra;
+    } = {}
+  ): Promise<{ ok: boolean; importedCount?: number; errors: string[] }> {
+    const { adminUser, headers, extra } = options;
+    const columns = this.getColumnNames(data);
+    const resource = this.adminforth.config.resources.find(r => r.resourceId === this.resourceConfig.resourceId);
+    const { errors, resourceColumns } = this.validateColumns(columns);
+    if (errors.length > 0) {
+      return { ok: false, errors };
+    }
+
+    const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
+    const rows = this.buildRowsFromData(data, columns, resourceColumns, { coerceTypes: true });
+
+    if (adminUser) {
+      this.tryToAuditLogAction('import', `Import CSV (new only) with ${Object.keys(data).length} columns`, adminUser, headers);
+    }
+
+    let importedCount = 0;
+    const limit = pLimit(100);
+
+    await Promise.all(rows.map((row) => limit(async () => {
+      try {
+        const rowErrors = await this.isRowValid(row);
+        if (rowErrors.length > 0) {
+          errors.push(...rowErrors);
+          return;
+        }
+        if (primaryKeyColumn && row[primaryKeyColumn.name]) {
+          const existingRecord = await this.adminforth.resource(this.resourceConfig.resourceId)
+            .list([Filters.EQ(primaryKeyColumn.name, row[primaryKeyColumn.name])]);
+
+          if (existingRecord.length > 0) {
+            return;
+          }
+        }
+        await this.adminforth.createResourceRecord({
+          resource: resource,
+          record: row,
+          adminUser: adminUser,
+          extra,
+        });
+        importedCount++;
+      } catch (e) {
+        errors.push(e.message);
+      }
+    })));
+
+    return { ok: true, importedCount, errors };
+  }
+
+  /**
+   * Check how many of the given records already exist (matched by primary key).
+   * Can be called programmatically, e.g. `this.checkRecords(data)`.
+   */
+  public async checkRecords(data: Record<string, unknown[]>): Promise<{
+    ok: true;
+    total: number;
+    existingCount: number;
+    newCount: number;
+  }> {
+    const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
+    const columns = this.getColumnNames(data);
+    const rows = this.buildRowsFromData(data, columns, undefined, { coerceTypes: false });
+
+    const primaryKeys = rows
+      .map(row => primaryKeyColumn ? row[primaryKeyColumn.name] : undefined)
+      .filter(key => key !== undefined && key !== null && key !== '');
+
+    const existingRecords = await this.adminforth
+      .resource(this.resourceConfig.resourceId)
+      .list([{
+        field: primaryKeyColumn.name,
+        operator: AdminForthFilterOperators.IN,
+        value: primaryKeys,
+      }]);
+
+    return {
+      ok: true,
+      total: rows.length,
+      existingCount: existingRecords.length,
+      newCount: rows.length - existingRecords.length,
+    };
   }
 
   private getColumnNames(data: Record<string, unknown[]>): string[] {
