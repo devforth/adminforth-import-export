@@ -121,7 +121,7 @@ export default class ImportExport extends AdminForthPlugin {
     try {
       this.auditLogPlugin = this.adminforth.getPluginByClassName('AuditLogPlugin');
     } catch (e) {
-      console.warn('Failed to get AuditLogPlugin for imort-export plugin. Audit logging will be skipped.');
+      console.warn('Failed to get AuditLogPlugin for import-export plugin. Audit logging will be skipped.');
     }
   }
 
