@@ -20,7 +20,7 @@ export default class ImportExport extends AdminForthPlugin {
   authResourceId: string;
   adminforth: IAdminForth;
   auditLogPlugin: Record<string, any> | undefined;
-  
+  backgroundJobsPlugin: any;
  
   constructor(options: PluginOptions) {
     super(options, import.meta.url);
@@ -122,6 +122,31 @@ export default class ImportExport extends AdminForthPlugin {
       this.auditLogPlugin = this.adminforth.getPluginByClassName('AuditLogPlugin');
     } catch (e) {
       console.warn('Failed to get AuditLogPlugin for import-export plugin. Audit logging will be skipped.');
+    }
+
+    if (this.options.exportBigDataset) {
+      const backgroundJobsPlugin = adminforth.getPluginByClassName<any>('BackgroundJobsPlugin');
+
+      if (!backgroundJobsPlugin) {
+        throw new Error(`BackgroundJobsPlugin is required for export of big dataset to work, please add it to your plugins`);
+      }
+
+      backgroundJobsPlugin.registerTaskHandler({
+        // job handler name
+        jobHandlerName: 'export_csv_job_handler',
+        //handler function
+        handler: async ({ jobId, setTaskStateField, getTaskStateField }) => {
+
+        },
+        parallelLimit: this.options.exportBigDataset.parallelExportsLimit || 5,
+      })
+
+      backgroundJobsPlugin.registerTaskDetailsComponent({
+        jobHandlerName: 'export_csv_job_handler', // Handler name
+        component: { 
+          file: this.componentPath('ExportCsvJobViewComponent.vue')  //custom component for the job details
+        },
+      })
     }
   }
 
@@ -248,6 +273,17 @@ export default class ImportExport extends AdminForthPlugin {
         return this.checkRecords(data);
       }
     });
+
+    server.endpoint({
+      method: 'POST',
+      path: `/plugin/${this.pluginInstanceId}/start-export-job`,
+      request_schema: exportCsvBodySchema,
+      handler: async ({ body, adminUser, headers }) => {
+        const { filters, sort, selectedIds } = body as z.infer<typeof exportCsvBodySchema>;
+
+
+      },
+    })
   }
 
   /**
