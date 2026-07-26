@@ -28,8 +28,9 @@
     "adminforth": "^3.8.2"
   },
   "devDependencies": {
+    "@adminforth/background-jobs": "^1.18.4",
     "@types/node": "^22.10.7",
-    "adminforth": "^3.8.2",
+    "adminforth": "^3.12.1",
     "semantic-release": "^24.2.1",
     "semantic-release-slack-bot": "^4.0.2",
     "typescript": "^5.7.3"
@@ -60,6 +61,7 @@
     ]
   },
   "dependencies": {
+    "csv": "^6.6.1",
     "p-limit": "^7.3.0",
     "zod": "^4.3.6"
   }

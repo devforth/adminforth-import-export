@@ -48,6 +48,7 @@ const open = ref(false);
 const rootRef = ref<HTMLElement | null>(null);
 const allCount = ref<number | null>(null);
 const filteredCount = ref<number | null>(null);
+let countsPromise: Promise<void> | null = null;
 
 defineExpose({
   click: () => { toggle(); },
@@ -91,7 +92,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleClickOutside))
 function toggle() {
   open.value = !open.value;
   if (open.value) {
-    fetchCounts();
+    countsPromise = fetchCounts();
   }
 }
 
@@ -119,7 +120,55 @@ async function fetchCounts() {
 
 function run(select: string) {
   open.value = false;
-  exportCsv(select);
+  if (props.meta?.exportBigDataset) {
+    startExportJob(select);
+  } else {
+    exportCsv(select);
+  }
+}
+
+/**
+ * Total is taken from counts already fetched for the dropdown labels, so the backend does not have
+ * to run an extra count query just to render export progress.
+ */
+async function getTotalForSelection(select: string): Promise<number | undefined> {
+  if (select === 'selected') {
+    return props.checkboxes?.length || 0;
+  }
+  await countsPromise;
+  const count = select === 'filtered' ? filteredCount.value : allCount.value;
+  return count ?? undefined;
+}
+
+async function startExportJob(select: string) {
+  inProgress.value = true;
+  try {
+    const resp = await callAdminForthApi({
+      path: `/plugin/${props.meta?.pluginInstanceId}/start-export-job`,
+      method: 'POST',
+      body: {
+        filters: select === 'filtered' ? filtersStore.getFilters() : [],
+        sort: filtersStore.getSort(),
+        selectedIds: select === 'selected' ? props.checkboxes : undefined,
+        totalRows: await getTotalForSelection(select),
+      },
+    });
+
+    if (!resp?.ok) {
+      throw new Error(resp?.error || t('Failed to start export'));
+    }
+
+    // registered globally by the background jobs plugin
+    (window as any).OpenJobInfoPopup?.(resp.jobId);
+  } catch (error) {
+    adminforth.alert({
+      message: error instanceof Error ? error.message : t('Export failed'),
+      variant: 'danger',
+    });
+  } finally {
+    inProgress.value = false;
+    adminforth.list.closeThreeDotsDropdown();
+  }
 }
 
 function downloadFile(data: string, filename: string) {
