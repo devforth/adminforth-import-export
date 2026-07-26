@@ -13,6 +13,12 @@ export interface PluginOptions extends PluginsCommonOptions {
      */
     bufferSizeMb?: number;
 
+    /**
+     * How many records are pulled from the database per iteration. The default value is 100.
+     * Bigger values make the export faster but take more RAM on the server, smaller values do the opposite.
+     */
+    readChunkSize?: number;
+
     storageAdapter: StorageAdapter;
   }
 }

@@ -5,6 +5,7 @@ import type BackgroundJobsPlugin from '@adminforth/background-jobs';
 import pLimit from 'p-limit';
 import { z } from "zod";
 import {
+  DEFAULT_READ_CHUNK_SIZE,
   EXPORT_CSV_JOB_HANDLER_NAME,
   MINIMAL_BUFFER_SIZE_MB,
   getExportDownloadUrl,
@@ -185,6 +186,12 @@ export default class ImportExport extends AdminForthPlugin {
         this.options.exportBigDataset.bufferSizeMb = MINIMAL_BUFFER_SIZE_MB;
       } else if (this.options.exportBigDataset.bufferSizeMb < MINIMAL_BUFFER_SIZE_MB) {
         throw new Error(`exportBigDataset.bufferSizeMb must be at least ${MINIMAL_BUFFER_SIZE_MB}, got ${this.options.exportBigDataset.bufferSizeMb}`);
+      }
+
+      if (this.options.exportBigDataset.readChunkSize === undefined) {
+        this.options.exportBigDataset.readChunkSize = DEFAULT_READ_CHUNK_SIZE;
+      } else if (!Number.isInteger(this.options.exportBigDataset.readChunkSize) || this.options.exportBigDataset.readChunkSize < 1) {
+        throw new Error(`exportBigDataset.readChunkSize must be a positive integer, got ${this.options.exportBigDataset.readChunkSize}`);
       }
 
       this.options.exportBigDataset.storageAdapter.setupLifecycle(

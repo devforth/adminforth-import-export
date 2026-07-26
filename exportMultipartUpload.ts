@@ -7,8 +7,8 @@ import type ImportExportPlugin from './index.js';
 export const EXPORT_CSV_JOB_HANDLER_NAME = 'export_csv_job_handler';
 export const MINIMAL_BUFFER_SIZE_MB = 5;
 
-/** How many records are pulled from the database per iteration. */
-const READ_CHUNK_SIZE = 100;
+/** How many records are pulled from the database per iteration, unless overridden in plugin options. */
+export const DEFAULT_READ_CHUNK_SIZE = 100;
 /** Minimal delay between two progress publications, to not spam websocket/db on fast datasets. */
 const PROGRESS_PUBLISH_INTERVAL_MS = 1000;
 /** Minimal delay between two checks whether the job was cancelled from UI. */
@@ -171,7 +171,8 @@ export async function runExportCsvJob(
 ): Promise<void> {
   const backgroundJobsPlugin = getBackgroundJobsPlugin(plugin);
   const { filters, sort, fileKey } = (await getState()) as TaskState;
-  const { storageAdapter, bufferSizeMb } = plugin.options.exportBigDataset;
+  const { storageAdapter, bufferSizeMb, readChunkSize } = plugin.options.exportBigDataset;
+  const chunkSize = readChunkSize ?? DEFAULT_READ_CHUNK_SIZE;
 
   const connector = plugin.adminforth.connectors[plugin.resourceConfig.dataSource];
   //normalize filters and sort 
@@ -193,10 +194,10 @@ export async function runExportCsvJob(
     // BOM keeps Excel happy with non-ASCII values
     // Add this symbol to the beginning of the file to indicate that it is UTF-8 encoded. (requred for some versions of Excel for some reason. Without this symbol encoding can be broken)
     await writer.write('﻿' + buildCsvChunk([fields], columnsToForceQuote));
-    for (let offset = 0; ; offset += READ_CHUNK_SIZE) {
+    for (let offset = 0; ; offset += chunkSize) {
       const { data } = await connector.getData({
         resource: plugin.resourceConfig,
-        limit: READ_CHUNK_SIZE,
+        limit: chunkSize,
         offset,
         filters: normalizedFilters,
         sort: stableSort,
@@ -218,7 +219,7 @@ export async function runExportCsvJob(
         }
       }
 
-      const isLastChunk = data.length < READ_CHUNK_SIZE;
+      const isLastChunk = data.length < chunkSize;
       if (!isLastChunk && now - lastProgressPublishedAt >= PROGRESS_PUBLISH_INTERVAL_MS) {
         lastProgressPublishedAt = now;
         await backgroundJobsPlugin.setJobStateField(jobId, 'exportedRows', exportedRows);
