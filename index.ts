@@ -192,7 +192,7 @@ export default class ImportExport extends AdminForthPlugin {
       );
 
       backgroundJobsPlugin.registerTaskHandler({
-        jobHandlerName: EXPORT_CSV_JOB_HANDLER_NAME,
+        jobHandlerName: `${EXPORT_CSV_JOB_HANDLER_NAME}-${this.pluginInstanceId}`,
         handler: async ({ jobId, getState }) => {
           await runExportCsvJob(this, { jobId, getState });
         },
@@ -201,7 +201,7 @@ export default class ImportExport extends AdminForthPlugin {
       })
 
       backgroundJobsPlugin.registerTaskDetailsComponent({
-        jobHandlerName: EXPORT_CSV_JOB_HANDLER_NAME,
+        jobHandlerName: `${EXPORT_CSV_JOB_HANDLER_NAME}-${this.pluginInstanceId}`,
         component: {
           file: this.componentPath('ExportCsvJobViewComponent.vue'),
           meta: { pluginInstanceId: this.pluginInstanceId },

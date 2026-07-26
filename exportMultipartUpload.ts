@@ -180,7 +180,6 @@ export async function runExportCsvJob(
   const { columns, fields, columnsToForceQuote } = getExportColumns(plugin);
 
   const estimatedTotal: number = (await backgroundJobsPlugin.getJobStateField(jobId, 'totalRows')) ?? 0;
-  console.log('estimatedTotal', estimatedTotal)
 
   const writer = await storageAdapter.createWriteStream(fileKey, 'text/csv', bufferSizeMb);
 
@@ -193,7 +192,6 @@ export async function runExportCsvJob(
     // BOM keeps Excel happy with non-ASCII values
     // Add this symbol to the beginning of the file to indicate that it is UTF-8 encoded. (requred for some versions of Excel for some reason. Without this symbol encoding can be broken)
     await writer.write('﻿' + buildCsvChunk([fields], columnsToForceQuote));
-    console.log('Writing csv header', '﻿' + buildCsvChunk([fields], columnsToForceQuote));
     for (let offset = 0; ; offset += READ_CHUNK_SIZE) {
       const { data } = await connector.getData({
         resource: plugin.resourceConfig,
@@ -204,7 +202,6 @@ export async function runExportCsvJob(
         getTotals: false,
       });
 
-      console.log(`ImportExport: export job ${jobId} fetched ${data.length} rows (offset ${offset})`);
 
       if (data.length) {
         await writer.write(buildCsvChunk(data.map((row) => serializeRow(columns, row)), columnsToForceQuote));
@@ -281,7 +278,7 @@ export async function startExport(
     `Export ${resourceId} to CSV`,
     adminUser,
     [{ state: { filters, sort, fileKey, fileName } as TaskState }],
-    EXPORT_CSV_JOB_HANDLER_NAME,
+    `${EXPORT_CSV_JOB_HANDLER_NAME}-${plugin.pluginInstanceId}`,
     {
       pluginInstanceId: plugin.pluginInstanceId,
       resourceId,
@@ -309,7 +306,7 @@ export async function getExportDownloadUrl(
   if (!jobRecord) {
     return { ok: false, error: 'Export job not found' };
   }
-  if (jobRecord[backgroundJobsPlugin.options.jobHandlerField] !== EXPORT_CSV_JOB_HANDLER_NAME) {
+  if (jobRecord[backgroundJobsPlugin.options.jobHandlerField] !== `${EXPORT_CSV_JOB_HANDLER_NAME}-${plugin.pluginInstanceId}`) {
     return { ok: false, error: 'Export job not found' };
   }
 
