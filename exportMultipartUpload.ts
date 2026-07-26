@@ -8,7 +8,7 @@ export const EXPORT_CSV_JOB_HANDLER_NAME = 'export_csv_job_handler';
 export const MINIMAL_BUFFER_SIZE_MB = 5;
 
 /** How many records are pulled from the database per iteration. */
-const READ_CHUNK_SIZE = 10;
+const READ_CHUNK_SIZE = 100;
 /** Minimal delay between two progress publications, to not spam websocket/db on fast datasets. */
 const PROGRESS_PUBLISH_INTERVAL_MS = 1000;
 /** Minimal delay between two checks whether the job was cancelled from UI. */
@@ -46,6 +46,7 @@ function getExportColumns(plugin: ImportExportPlugin): {
       col.type !== AdminForthDataTypes.FLOAT
       && col.type !== AdminForthDataTypes.INTEGER
       && col.type !== AdminForthDataTypes.BOOLEAN
+      && col.type !== AdminForthDataTypes.DECIMAL
     )),
   };
 }
