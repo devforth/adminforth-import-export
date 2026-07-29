@@ -13,6 +13,14 @@ import {
   startExport,
 } from './exportMultipartUpload.js';
 
+const SIZE_PROBE_ROWS = 20;
+/**
+ * Rows held as JS objects cost several times more than their serialized form (per-property
+ * overhead, 2 bytes per char in non-latin1 strings), so the RAM guess is scaled up.
+ */
+const RAM_OVERHEAD_FACTOR = 4;
+const DEFAULT_EXPORT_VIA_UPLOAD_BUFFER_SIZE_MB = 5;
+
 const exportCsvBodySchema = z.object({
   filters: z.any(),
   sort: z.any(),
@@ -152,7 +160,7 @@ export default class ImportExport extends AdminForthPlugin {
       file: this.componentPath('ExportCsv.vue'),
       meta: {
         pluginInstanceId: this.pluginInstanceId,
-        exportBigDataset: !!this.options.exportBigDataset,
+        exportViaUpload: !!this.options.exportViaUpload,
       }
     }, {
       file: this.componentPath('ImportCsv.vue'),
@@ -171,30 +179,30 @@ export default class ImportExport extends AdminForthPlugin {
       console.warn('Failed to get AuditLogPlugin for import-export plugin. Audit logging will be skipped.');
     }
 
-    if (this.options.exportBigDataset) {
+    if (this.options.exportViaUpload) {
       const backgroundJobsPlugin = adminforth.getPluginByClassName<BackgroundJobsPlugin>('BackgroundJobsPlugin');
 
       if (!backgroundJobsPlugin) {
         throw new Error(`BackgroundJobsPlugin is required for export of big dataset to work, please add it to your plugins`);
       }
 
-      if (!this.options.exportBigDataset.storageAdapter) {
-        throw new Error(`exportBigDataset.storageAdapter is required for export of big dataset to work`);
+      if (!this.options.exportViaUpload.storageAdapter) {
+        throw new Error(`exportViaUpload.storageAdapter is required for export of big dataset to work`);
       }
 
-      if (this.options.exportBigDataset.bufferSizeMb === undefined) {
-        this.options.exportBigDataset.bufferSizeMb = MINIMAL_BUFFER_SIZE_MB;
-      } else if (this.options.exportBigDataset.bufferSizeMb < MINIMAL_BUFFER_SIZE_MB) {
-        throw new Error(`exportBigDataset.bufferSizeMb must be at least ${MINIMAL_BUFFER_SIZE_MB}, got ${this.options.exportBigDataset.bufferSizeMb}`);
+      if (this.options.exportViaUpload.bufferSizeMb === undefined) {
+        this.options.exportViaUpload.bufferSizeMb = MINIMAL_BUFFER_SIZE_MB;
+      } else if (this.options.exportViaUpload.bufferSizeMb < MINIMAL_BUFFER_SIZE_MB) {
+        throw new Error(`exportViaUpload.bufferSizeMb must be at least ${MINIMAL_BUFFER_SIZE_MB}, got ${this.options.exportViaUpload.bufferSizeMb}`);
       }
 
-      if (this.options.exportBigDataset.readChunkSize === undefined) {
-        this.options.exportBigDataset.readChunkSize = DEFAULT_READ_CHUNK_SIZE;
-      } else if (!Number.isInteger(this.options.exportBigDataset.readChunkSize) || this.options.exportBigDataset.readChunkSize < 1) {
-        throw new Error(`exportBigDataset.readChunkSize must be a positive integer, got ${this.options.exportBigDataset.readChunkSize}`);
+      if (this.options.exportViaUpload.readChunkSize === undefined) {
+        this.options.exportViaUpload.readChunkSize = DEFAULT_READ_CHUNK_SIZE;
+      } else if (!Number.isInteger(this.options.exportViaUpload.readChunkSize) || this.options.exportViaUpload.readChunkSize < 1) {
+        throw new Error(`exportViaUpload.readChunkSize must be a positive integer, got ${this.options.exportViaUpload.readChunkSize}`);
       }
 
-      this.options.exportBigDataset.storageAdapter.setupLifecycle(
+      this.options.exportViaUpload.storageAdapter.setupLifecycle(
         `${this.resourceConfig.resourceId}-${this.pluginInstanceId}`
       );
 
@@ -339,7 +347,7 @@ export default class ImportExport extends AdminForthPlugin {
       request_schema: startExportJobBodySchema,
       handler: async ({ body, adminUser, headers }) => {
         const { filters, sort, selectedIds, totalRows } = body as z.infer<typeof startExportJobBodySchema>;
-        if (!this.options.exportBigDataset) {
+        if (!this.options.exportViaUpload) {
           return { ok: false, error: 'Big dataset export is not enabled for this resource' };
         }
         if (!filters || !sort) {
@@ -396,7 +404,7 @@ export default class ImportExport extends AdminForthPlugin {
       request_schema: exportDownloadUrlBodySchema,
       handler: async ({ body, adminUser }) => {
         const { jobId } = body as z.infer<typeof exportDownloadUrlBodySchema>;
-        if (!this.options.exportBigDataset) {
+        if (!this.options.exportViaUpload) {
           return { ok: false, error: 'Big dataset export is not enabled for this resource' };
         }
         const access = await this.ensureAnyAllowed(
@@ -420,6 +428,36 @@ export default class ImportExport extends AdminForthPlugin {
   }
 
   /**
+   * Approximates how much the full result set of the given query will weigh, without reading it.
+   * A small probe of records is fetched and its serialized size is multiplied by the total count.
+   * Can be called programmatically, e.g. `this.estimateExportSize(filters, sort)`.
+   */
+  public async estimateExportSize(
+    filters: any,
+    sort: any
+  ): Promise<{ totalRows: number; serializedMiB: number; ramMiB: number }> {
+    const connector = this.adminforth.connectors[this.resourceConfig.dataSource];
+    const probe = await connector.getData({
+      resource: this.resourceConfig,
+      limit: SIZE_PROBE_ROWS,
+      offset: 0,
+      filters: connector.validateAndNormalizeInputFilters(filters),
+      sort,
+      getTotals: true,
+    });
+
+    const totalRows = probe.total ?? 0;
+    if (!totalRows || probe.data.length === 0) {
+      return { totalRows, serializedMiB: 0, ramMiB: 0 };
+    }
+
+    const bytesPerRow = Buffer.byteLength(JSON.stringify(probe.data), 'utf8') / probe.data.length;
+    const serializedMiB = (bytesPerRow * totalRows) / 1024 / 1024;
+
+    return { totalRows, serializedMiB, ramMiB: serializedMiB * RAM_OVERHEAD_FACTOR };
+  }
+
+  /**
    * Export resource records as CSV-ready data.
    * Can be called programmatically, e.g. `this.exportCsv(filters, sort)`.
    */
@@ -432,9 +470,20 @@ export default class ImportExport extends AdminForthPlugin {
     data: { fields: string[]; data: unknown[][] };
     columnsToForceQuote: boolean[];
     exportedCount: number;
-  }> {
+  } | { ok: false; error: string }> {
     const { adminUser, headers } = options;
     const connector = this.adminforth.connectors[this.resourceConfig.dataSource];
+
+    const { serializedMiB } = await this.estimateExportSize(filters, sort);
+    console.log("Estimated size:", serializedMiB);
+    const limit = this.options.classicalUploadLimitMiB ?? DEFAULT_EXPORT_VIA_UPLOAD_BUFFER_SIZE_MB;
+    if (serializedMiB > limit) {
+      return { 
+        ok: false, 
+        error: 'Upload limit exceeded, please filter smaller amount of data for export or contact your administrator' 
+      };
+    }
+
     const data = await connector.getData({
       resource: this.resourceConfig,
       limit: 1e6,

@@ -120,7 +120,7 @@ async function fetchCounts() {
 
 function run(select: string) {
   open.value = false;
-  if (props.meta?.exportBigDataset) {
+  if (props.meta?.exportViaUpload) {
     startExportJob(select);
   } else {
     exportCsv(select);

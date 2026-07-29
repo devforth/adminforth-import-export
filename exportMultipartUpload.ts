@@ -171,7 +171,7 @@ export async function runExportCsvJob(
 ): Promise<void> {
   const backgroundJobsPlugin = getBackgroundJobsPlugin(plugin);
   const { filters, sort, fileKey } = (await getState()) as TaskState;
-  const { storageAdapter, bufferSizeMb, readChunkSize } = plugin.options.exportBigDataset;
+  const { storageAdapter, bufferSizeMb, readChunkSize } = plugin.options.exportViaUpload;
   const chunkSize = readChunkSize ?? DEFAULT_READ_CHUNK_SIZE;
 
   const connector = plugin.adminforth.connectors[plugin.resourceConfig.dataSource];
@@ -318,7 +318,7 @@ export async function getExportDownloadUrl(
     return { ok: false, error: 'Export is not finished yet' };
   }
 
-  const { storageAdapter } = plugin.options.exportBigDataset;
+  const { storageAdapter } = plugin.options.exportViaUpload;
   const url = await storageAdapter.getDownloadUrl(state.fileKey, DOWNLOAD_URL_EXPIRES_IN_SECONDS);
 
   return { ok: true, url, fileName: state.fileName };
