@@ -1,13 +1,41 @@
 import { AdminForthPlugin, suggestIfTypo, AdminForthFilterOperators, Filters, AdminForthDataTypes, rejectApiRawFilters, interpretResource, ActionCheckSource, AllowedActionsEnum } from "adminforth";
 import type { IAdminForth, IHttpServer, AdminForthResourceColumn, AdminForthComponentDeclaration, AdminForthResource, AdminUser, HttpExtra, IAdminForthHttpResponse } from "adminforth";
 import type { PluginOptions } from './types.js';
+import type BackgroundJobsPlugin from '@adminforth/background-jobs';
 import pLimit from 'p-limit';
 import { z } from "zod";
+import {
+  DEFAULT_READ_CHUNK_SIZE,
+  EXPORT_CSV_JOB_HANDLER_NAME,
+  MINIMAL_BUFFER_SIZE_MB,
+  getExportDownloadUrl,
+  runExportCsvJob,
+  startExport,
+} from './exportMultipartUpload.js';
+
+const SIZE_PROBE_ROWS = 20;
+/**
+ * Rows held as JS objects cost several times more than their serialized form (per-property
+ * overhead, 2 bytes per char in non-latin1 strings), so the RAM guess is scaled up.
+ */
+const RAM_OVERHEAD_FACTOR = 4;
+const DEFAULT_EXPORT_VIA_UPLOAD_BUFFER_SIZE_MB = 5;
 
 const exportCsvBodySchema = z.object({
   filters: z.any(),
   sort: z.any(),
   selectedIds: z.array(z.any()).optional(),
+}).strict();
+
+const startExportJobBodySchema = z.object({
+  filters: z.any(),
+  sort: z.any(),
+  selectedIds: z.array(z.any()).optional(),
+  totalRows: z.number().int().nonnegative().optional(),
+}).strict();
+
+const exportDownloadUrlBodySchema = z.object({
+  jobId: z.string(),
 }).strict();
 
 const importCsvBodySchema = z.object({
@@ -20,7 +48,7 @@ export default class ImportExport extends AdminForthPlugin {
   authResourceId: string;
   adminforth: IAdminForth;
   auditLogPlugin: Record<string, any> | undefined;
-  
+  backgroundJobsPlugin: any;
  
   constructor(options: PluginOptions) {
     super(options, import.meta.url);
@@ -68,6 +96,30 @@ export default class ImportExport extends AdminForthPlugin {
     }
   }
 
+  /**
+   * When user exported a manual selection, the selection itself becomes the only filter.
+   */
+  private resolveExportFilters(
+    filters: any,
+    selectedIds?: unknown[]
+  ): { ok: boolean; filters?: any; error?: string } {
+    if (!Array.isArray(selectedIds) || selectedIds.length === 0) {
+      return { ok: true, filters };
+    }
+    const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
+    if (!primaryKeyColumn) {
+      return { ok: false, error: 'Cannot export selected records: resource has no primary key' };
+    }
+    return {
+      ok: true,
+      filters: [{
+        field: primaryKeyColumn.name,
+        operator: AdminForthFilterOperators.IN,
+        value: selectedIds,
+      }],
+    };
+  }
+
   private async ensureAnyAllowed(
     adminUser: AdminUser,
     checks: { source: ActionCheckSource; action: AllowedActionsEnum }[],
@@ -106,7 +158,10 @@ export default class ImportExport extends AdminForthPlugin {
     }
     (resourceConfig.options.pageInjections.list.threeDotsDropdownItems as AdminForthComponentDeclaration[]).push({
       file: this.componentPath('ExportCsv.vue'),
-      meta: { pluginInstanceId: this.pluginInstanceId }
+      meta: {
+        pluginInstanceId: this.pluginInstanceId,
+        exportViaUpload: !!this.options.exportViaUpload,
+      }
     }, {
       file: this.componentPath('ImportCsv.vue'),
       meta: { pluginInstanceId: this.pluginInstanceId }
@@ -122,6 +177,51 @@ export default class ImportExport extends AdminForthPlugin {
       this.auditLogPlugin = this.adminforth.getPluginByClassName('AuditLogPlugin');
     } catch (e) {
       console.warn('Failed to get AuditLogPlugin for import-export plugin. Audit logging will be skipped.');
+    }
+
+    if (this.options.exportViaUpload) {
+      const backgroundJobsPlugin = adminforth.getPluginByClassName<BackgroundJobsPlugin>('BackgroundJobsPlugin');
+
+      if (!backgroundJobsPlugin) {
+        throw new Error(`BackgroundJobsPlugin is required for export of big dataset to work, please add it to your plugins`);
+      }
+
+      if (!this.options.exportViaUpload.storageAdapter) {
+        throw new Error(`exportViaUpload.storageAdapter is required for export of big dataset to work`);
+      }
+
+      if (this.options.exportViaUpload.bufferSizeMb === undefined) {
+        this.options.exportViaUpload.bufferSizeMb = MINIMAL_BUFFER_SIZE_MB;
+      } else if (this.options.exportViaUpload.bufferSizeMb < MINIMAL_BUFFER_SIZE_MB) {
+        throw new Error(`exportViaUpload.bufferSizeMb must be at least ${MINIMAL_BUFFER_SIZE_MB}, got ${this.options.exportViaUpload.bufferSizeMb}`);
+      }
+
+      if (this.options.exportViaUpload.readChunkSize === undefined) {
+        this.options.exportViaUpload.readChunkSize = DEFAULT_READ_CHUNK_SIZE;
+      } else if (!Number.isInteger(this.options.exportViaUpload.readChunkSize) || this.options.exportViaUpload.readChunkSize < 1) {
+        throw new Error(`exportViaUpload.readChunkSize must be a positive integer, got ${this.options.exportViaUpload.readChunkSize}`);
+      }
+
+      this.options.exportViaUpload.storageAdapter.setupLifecycle(
+        `${this.resourceConfig.resourceId}-${this.pluginInstanceId}`
+      );
+
+      backgroundJobsPlugin.registerTaskHandler({
+        jobHandlerName: `${EXPORT_CSV_JOB_HANDLER_NAME}-${this.pluginInstanceId}`,
+        handler: async ({ jobId, getState }) => {
+          await runExportCsvJob(this, { jobId, getState });
+        },
+        // whole export is a single task which streams the file, there is nothing to parallelize
+        parallelLimit: 1,
+      })
+
+      backgroundJobsPlugin.registerTaskDetailsComponent({
+        jobHandlerName: `${EXPORT_CSV_JOB_HANDLER_NAME}-${this.pluginInstanceId}`,
+        component: {
+          file: this.componentPath('ExportCsvJobViewComponent.vue'),
+          meta: { pluginInstanceId: this.pluginInstanceId },
+        },
+      })
     }
   }
 
@@ -157,20 +257,12 @@ export default class ImportExport extends AdminForthPlugin {
           return rawFilterError;
         }
 
-        let effectiveFilters = filters;
-        if (Array.isArray(selectedIds) && selectedIds.length > 0) {
-          const primaryKeyColumn = this.resourceConfig.columns.find(col => col.primaryKey);
-          if (!primaryKeyColumn) {
-            return { ok: false, error: 'Cannot export selected records: resource has no primary key' };
-          }
-          effectiveFilters = [{
-            field: primaryKeyColumn.name,
-            operator: AdminForthFilterOperators.IN,
-            value: selectedIds,
-          }];
+        const effectiveFilters = this.resolveExportFilters(filters, selectedIds);
+        if (!effectiveFilters.ok) {
+          return { ok: false, error: effectiveFilters.error };
         }
 
-        return this.exportCsv(effectiveFilters, sort, { adminUser, headers });
+        return this.exportCsv(effectiveFilters.filters, sort, { adminUser, headers });
       }
     });
 
@@ -248,6 +340,121 @@ export default class ImportExport extends AdminForthPlugin {
         return this.checkRecords(data);
       }
     });
+
+    server.endpoint({
+      method: 'POST',
+      path: `/plugin/${this.pluginInstanceId}/start-export-job`,
+      request_schema: startExportJobBodySchema,
+      handler: async ({ body, adminUser, headers }) => {
+        const { filters, sort, selectedIds, totalRows } = body as z.infer<typeof startExportJobBodySchema>;
+        if (!this.options.exportViaUpload) {
+          return { ok: false, error: 'Big dataset export is not enabled for this resource' };
+        }
+        if (!filters || !sort) {
+          return { ok: false, error: 'Missing filters or sort in request body' };
+        }
+        const access = await this.ensureAnyAllowed(
+          adminUser,
+          [
+            { source: ActionCheckSource.ListRequest, action: AllowedActionsEnum.list },
+            { source: ActionCheckSource.ShowRequest, action: AllowedActionsEnum.show },
+          ],
+          { requestBody: body }
+        );
+        if (!access.ok) {
+          return { ok: false, error: access.error };
+        }
+        const rawFilterError = rejectApiRawFilters(body.filters);
+        if (rawFilterError) {
+          return rawFilterError;
+        }
+
+        const effectiveFilters = this.resolveExportFilters(filters, selectedIds);
+        if (!effectiveFilters.ok) {
+          return { ok: false, error: effectiveFilters.error };
+        }
+
+        const effectiveTotalRows = Array.isArray(selectedIds) && selectedIds.length > 0
+          ? selectedIds.length
+          : totalRows;
+
+        this.tryToAuditLogAction(
+          'export',
+          `Started background CSV export with filters: ${JSON.stringify(effectiveFilters.filters)} and sort: ${JSON.stringify(sort)}`,
+          adminUser,
+          headers
+        );
+
+        try {
+          return await startExport(this, {
+            filters: effectiveFilters.filters,
+            sort,
+            adminUser,
+            totalRows: effectiveTotalRows,
+          });
+        } catch (e) {
+          return { ok: false, error: e instanceof Error ? e.message : 'Failed to start export job' };
+        }
+      },
+    })
+
+    server.endpoint({
+      method: 'POST',
+      path: `/plugin/${this.pluginInstanceId}/export-job-download-url`,
+      request_schema: exportDownloadUrlBodySchema,
+      handler: async ({ body, adminUser }) => {
+        const { jobId } = body as z.infer<typeof exportDownloadUrlBodySchema>;
+        if (!this.options.exportViaUpload) {
+          return { ok: false, error: 'Big dataset export is not enabled for this resource' };
+        }
+        const access = await this.ensureAnyAllowed(
+          adminUser,
+          [
+            { source: ActionCheckSource.ListRequest, action: AllowedActionsEnum.list },
+            { source: ActionCheckSource.ShowRequest, action: AllowedActionsEnum.show },
+          ],
+          { requestBody: body }
+        );
+        if (!access.ok) {
+          return { ok: false, error: access.error };
+        }
+        try {
+          return await getExportDownloadUrl(this, jobId);
+        } catch (e) {
+          return { ok: false, error: e instanceof Error ? e.message : 'Failed to build download link' };
+        }
+      },
+    })
+  }
+
+  /**
+   * Approximates how much the full result set of the given query will weigh, without reading it.
+   * A small probe of records is fetched and its serialized size is multiplied by the total count.
+   * Can be called programmatically, e.g. `this.estimateExportSize(filters, sort)`.
+   */
+  public async estimateExportSize(
+    filters: any,
+    sort: any
+  ): Promise<{ totalRows: number; serializedMiB: number; ramMiB: number }> {
+    const connector = this.adminforth.connectors[this.resourceConfig.dataSource];
+    const probe = await connector.getData({
+      resource: this.resourceConfig,
+      limit: SIZE_PROBE_ROWS,
+      offset: 0,
+      filters: connector.validateAndNormalizeInputFilters(filters),
+      sort,
+      getTotals: true,
+    });
+
+    const totalRows = probe.total ?? 0;
+    if (!totalRows || probe.data.length === 0) {
+      return { totalRows, serializedMiB: 0, ramMiB: 0 };
+    }
+
+    const bytesPerRow = Buffer.byteLength(JSON.stringify(probe.data), 'utf8') / probe.data.length;
+    const serializedMiB = (bytesPerRow * totalRows) / 1024 / 1024;
+
+    return { totalRows, serializedMiB, ramMiB: serializedMiB * RAM_OVERHEAD_FACTOR };
   }
 
   /**
@@ -263,9 +470,20 @@ export default class ImportExport extends AdminForthPlugin {
     data: { fields: string[]; data: unknown[][] };
     columnsToForceQuote: boolean[];
     exportedCount: number;
-  }> {
+  } | { ok: false; error: string }> {
     const { adminUser, headers } = options;
     const connector = this.adminforth.connectors[this.resourceConfig.dataSource];
+
+    const { serializedMiB } = await this.estimateExportSize(filters, sort);
+    console.log("Estimated size:", serializedMiB);
+    const limit = this.options.classicalUploadLimitMiB ?? DEFAULT_EXPORT_VIA_UPLOAD_BUFFER_SIZE_MB;
+    if (serializedMiB > limit) {
+      return { 
+        ok: false, 
+        error: 'Upload limit exceeded, please filter smaller amount of data for export or contact your administrator' 
+      };
+    }
+
     const data = await connector.getData({
       resource: this.resourceConfig,
       limit: 1e6,
