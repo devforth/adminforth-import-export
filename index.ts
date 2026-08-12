@@ -419,7 +419,7 @@ export default class ImportExport extends AdminForthPlugin {
           return { ok: false, error: access.error };
         }
         try {
-          return await getExportDownloadUrl(this, jobId);
+          return await getExportDownloadUrl(this, jobId, adminUser);
         } catch (e) {
           return { ok: false, error: e instanceof Error ? e.message : 'Failed to build download link' };
         }

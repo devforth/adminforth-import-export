@@ -301,6 +301,7 @@ export async function startExport(
 export async function getExportDownloadUrl(
   plugin: ImportExportPlugin,
   jobId: string,
+  adminUser: AdminUser
 ): Promise<{ ok: boolean; url?: string; fileName?: string; error?: string }> {
   const backgroundJobsPlugin = getBackgroundJobsPlugin(plugin);
 
@@ -310,6 +311,9 @@ export async function getExportDownloadUrl(
   }
   if (jobRecord[backgroundJobsPlugin.options.jobHandlerField] !== `${EXPORT_CSV_JOB_HANDLER_NAME}-${plugin.pluginInstanceId}`) {
     return { ok: false, error: 'Export job not found' };
+  }
+  if (jobRecord[backgroundJobsPlugin.options.startedByField] !== adminUser.pk /* && !isPrivileged(adminUser) */) {
+    return { ok:false, error:'Export job not found' };  // same message → not an existence oracle
   }
 
   const state = jobRecord[backgroundJobsPlugin.options.stateField] || {};
