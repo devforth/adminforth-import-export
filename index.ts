@@ -156,16 +156,21 @@ export default class ImportExport extends AdminForthPlugin {
     if (!resourceConfig.options.pageInjections.list.threeDotsDropdownItems) {
       resourceConfig.options.pageInjections.list.threeDotsDropdownItems = [];
     }
-    (resourceConfig.options.pageInjections.list.threeDotsDropdownItems as AdminForthComponentDeclaration[]).push({
+    const dropdownItems = resourceConfig.options.pageInjections.list.threeDotsDropdownItems as AdminForthComponentDeclaration[];
+    dropdownItems.push({
       file: this.componentPath('ExportCsv.vue'),
       meta: {
         pluginInstanceId: this.pluginInstanceId,
         exportViaUpload: !!this.options.exportViaUpload,
       }
-    }, {
-      file: this.componentPath('ImportCsv.vue'),
-      meta: { pluginInstanceId: this.pluginInstanceId }
     });
+
+    if (this.options.importEnabled !== false) {
+      dropdownItems.push({
+        file: this.componentPath('ImportCsv.vue'),
+        meta: { pluginInstanceId: this.pluginInstanceId }
+      });
+    }
 
 
     // simply modify resourceConfig or adminforth.config. You can get access to plugin options via this.options;
@@ -266,80 +271,82 @@ export default class ImportExport extends AdminForthPlugin {
       }
     });
 
-    server.endpoint({
-      method: 'POST',
-      path: `/plugin/${this.pluginInstanceId}/import-csv`,
-      request_schema: importCsvBodySchema,
-      handler: async ({ body, adminUser, query, headers, cookies, requestUrl, response }) => {
-        const { data } = body as z.infer<typeof importCsvBodySchema>;
-        if (!data || typeof data !== 'object') {
-          return { ok: false, error: 'Invalid data format. Expected an object with column names as keys and arrays of values as values.' };
+    if (this.options.importEnabled !== false) {
+      server.endpoint({
+        method: 'POST',
+        path: `/plugin/${this.pluginInstanceId}/import-csv`,
+        request_schema: importCsvBodySchema,
+        handler: async ({ body, adminUser, query, headers, cookies, requestUrl, response }) => {
+          const { data } = body as z.infer<typeof importCsvBodySchema>;
+          if (!data || typeof data !== 'object') {
+            return { ok: false, error: 'Invalid data format. Expected an object with column names as keys and arrays of values as values.' };
+          }
+          const createEditAccess = await this.ensureAnyAllowed(
+            adminUser,
+            [
+              { source: ActionCheckSource.CreateRequest, action: AllowedActionsEnum.create },
+              { source: ActionCheckSource.EditRequest, action: AllowedActionsEnum.edit }
+            ],
+            { requestBody: body }
+          );
+          if (!createEditAccess.ok) {
+            return { ok: false, error: createEditAccess.error };
+          }
+          return this.importCsv(data, {
+            adminUser,
+            headers,
+            response,
+            extra: { body, query, headers, cookies, requestUrl, response },
+          });
         }
-        const createEditAccess = await this.ensureAnyAllowed(
-          adminUser,
-          [
-            { source: ActionCheckSource.CreateRequest, action: AllowedActionsEnum.create },
-            { source: ActionCheckSource.EditRequest, action: AllowedActionsEnum.edit }
-          ],
-          { requestBody: body }
-        );
-        if (!createEditAccess.ok) {
-          return { ok: false, error: createEditAccess.error };
-        }
-        return this.importCsv(data, {
-          adminUser,
-          headers,
-          response,
-          extra: { body, query, headers, cookies, requestUrl, response },
-        });
-      }
-    });
+      });
 
-    server.endpoint({
-      method: 'POST',
-      path: `/plugin/${this.pluginInstanceId}/import-csv-new-only`,
-      request_schema: importCsvBodySchema,
-      handler: async ({ body, adminUser, query, headers, cookies, requestUrl, response }) => {
-        const { data } = body as z.infer<typeof importCsvBodySchema>;
-        if (!data || typeof data !== 'object') {
-          return { ok: false, error: 'Invalid data format. Expected an object with column names as keys and arrays of values as values.' };
+      server.endpoint({
+        method: 'POST',
+        path: `/plugin/${this.pluginInstanceId}/import-csv-new-only`,
+        request_schema: importCsvBodySchema,
+        handler: async ({ body, adminUser, query, headers, cookies, requestUrl, response }) => {
+          const { data } = body as z.infer<typeof importCsvBodySchema>;
+          if (!data || typeof data !== 'object') {
+            return { ok: false, error: 'Invalid data format. Expected an object with column names as keys and arrays of values as values.' };
+          }
+          const access = await this.ensureAnyAllowed(
+            adminUser,
+            [{ source: ActionCheckSource.CreateRequest, action: AllowedActionsEnum.create }],
+            { requestBody: body }
+          );
+          if (!access.ok) {
+            return { ok: false, error: access.error };
+          }
+          return this.importCsvNewOnly(data, {
+            adminUser,
+            headers,
+            extra: { body, query, headers, cookies, requestUrl, response },
+          });
         }
-        const access = await this.ensureAnyAllowed(
-          adminUser,
-          [{ source: ActionCheckSource.CreateRequest, action: AllowedActionsEnum.create }],
-          { requestBody: body }
-        );
-        if (!access.ok) {
-          return { ok: false, error: access.error };
-        }
-        return this.importCsvNewOnly(data, {
-          adminUser,
-          headers,
-          extra: { body, query, headers, cookies, requestUrl, response },
-        });
-      }
-    });
+      });
 
-    server.endpoint({
-      method: 'POST',
-      path: `/plugin/${this.pluginInstanceId}/check-records`,
-      request_schema: importCsvBodySchema,
-      handler: async ({ body, adminUser }) => {
-        const { data } = body as z.infer<typeof importCsvBodySchema>;
-        const access = await this.ensureAnyAllowed(
-          adminUser,
-          [
-            { source: ActionCheckSource.ListRequest, action: AllowedActionsEnum.list },
-            { source: ActionCheckSource.ShowRequest, action: AllowedActionsEnum.show },
-          ],
-          { requestBody: body }
-        );
-        if (!access.ok) {
-          return { ok: false, error: access.error };
+      server.endpoint({
+        method: 'POST',
+        path: `/plugin/${this.pluginInstanceId}/check-records`,
+        request_schema: importCsvBodySchema,
+        handler: async ({ body, adminUser }) => {
+          const { data } = body as z.infer<typeof importCsvBodySchema>;
+          const access = await this.ensureAnyAllowed(
+            adminUser,
+            [
+              { source: ActionCheckSource.ListRequest, action: AllowedActionsEnum.list },
+              { source: ActionCheckSource.ShowRequest, action: AllowedActionsEnum.show },
+            ],
+            { requestBody: body }
+          );
+          if (!access.ok) {
+            return { ok: false, error: access.error };
+          }
+          return this.checkRecords(data);
         }
-        return this.checkRecords(data);
-      }
-    });
+      });
+    }
 
     server.endpoint({
       method: 'POST',

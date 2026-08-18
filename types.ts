@@ -2,6 +2,12 @@ import  {type PluginsCommonOptions, StorageAdapter } from "adminforth";
 
 export interface PluginOptions extends PluginsCommonOptions {
   /**
+   * Whether CSV/XLSX import is available for this resource.
+   * Set to false when the plugin should provide export only. Defaults to true.
+   */
+  importEnabled?: boolean;
+
+  /**
    * classicalUploadLimitMiB applied only to classical export. Switch to upload export to enable exporting high volumes of data
    * Before reading the whole dataset into RAM, a probe of the first records is fetched and their
    * serialized size is multiplied by the total count. If the estimate exceeds this limit, the export

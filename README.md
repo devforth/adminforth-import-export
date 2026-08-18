@@ -19,6 +19,16 @@ Full setup and configuration guide:
 
 [AdminForth ImportExport Documentation](https://adminforth.dev/docs/tutorial/Plugins/import-export/)
 
+To use the plugin for export only, disable import in the plugin configuration:
+
+```ts
+new ImportExport({
+  importEnabled: false,
+})
+```
+
+Import is enabled by default for backward compatibility. Disabling it removes the import action from the UI and does not register the import-related HTTP endpoints.
+
 ## About AdminForth
 
 AdminForth is an open-source, agent-first admin framework for building robust admin panels and back-office applications faster.
