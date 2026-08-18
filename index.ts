@@ -162,13 +162,17 @@ export default class ImportExport extends AdminForthPlugin {
       meta: {
         pluginInstanceId: this.pluginInstanceId,
         exportViaUpload: !!this.options.exportViaUpload,
+        fileFormat: this.options.fileFormat ?? 'csv',
       }
     });
 
     if (this.options.importEnabled !== false) {
       dropdownItems.push({
         file: this.componentPath('ImportCsv.vue'),
-        meta: { pluginInstanceId: this.pluginInstanceId }
+        meta: {
+          pluginInstanceId: this.pluginInstanceId,
+          fileFormat: this.options.fileFormat ?? 'csv',
+        }
       });
     }
 
@@ -178,6 +182,9 @@ export default class ImportExport extends AdminForthPlugin {
   
   validateConfigAfterDiscover(adminforth: IAdminForth, resourceConfig: AdminForthResource) {
     // optional method where you can safely check field types after database discovery was performed
+    if (this.options.fileFormat && !['csv', 'xlsx'].includes(this.options.fileFormat)) {
+      throw new Error(`fileFormat must be either 'csv' or 'xlsx', got '${this.options.fileFormat}'`);
+    }
     try {
       this.auditLogPlugin = this.adminforth.getPluginByClassName('AuditLogPlugin');
     } catch (e) {
@@ -224,7 +231,10 @@ export default class ImportExport extends AdminForthPlugin {
         jobHandlerName: `${EXPORT_CSV_JOB_HANDLER_NAME}-${this.pluginInstanceId}`,
         component: {
           file: this.componentPath('ExportCsvJobViewComponent.vue'),
-          meta: { pluginInstanceId: this.pluginInstanceId },
+          meta: {
+            pluginInstanceId: this.pluginInstanceId,
+            fileFormat: this.options.fileFormat ?? 'csv',
+          },
         },
       })
     }
@@ -559,7 +569,7 @@ export default class ImportExport extends AdminForthPlugin {
     const rows = this.buildRowsFromData(data, columns, resourceColumns, { coerceTypes: true });
 
     if (adminUser) {
-      this.tryToAuditLogAction('import', `Import CSV with ${Object.keys(data).length} columns`, adminUser, headers);
+      this.tryToAuditLogAction('import', `Import data with ${Object.keys(data).length} columns`, adminUser, headers);
     }
 
     let importedCount = 0;
@@ -636,7 +646,7 @@ export default class ImportExport extends AdminForthPlugin {
     const rows = this.buildRowsFromData(data, columns, resourceColumns, { coerceTypes: true });
 
     if (adminUser) {
-      this.tryToAuditLogAction('import', `Import CSV (new only) with ${Object.keys(data).length} columns`, adminUser, headers);
+      this.tryToAuditLogAction('import', `Import data (new only) with ${Object.keys(data).length} columns`, adminUser, headers);
     }
 
     let importedCount = 0;
@@ -722,9 +732,9 @@ export default class ImportExport extends AdminForthPlugin {
       if (!resourceColumn) {
         const similar = suggestIfTypo(this.resourceConfig.columns.map((c) => c.name), col);
         errors.push(
-          `Column '${col}' defined in CSV not found in resource '${this.resourceConfig.resourceId}'. ${
+          `Column '${col}' defined in import file not found in resource '${this.resourceConfig.resourceId}'. ${
             similar
-              ? `If you mean '${similar}', rename it in CSV`
+              ? `If you mean '${similar}', rename it in the import file`
               : 'If column is in database but not in resource configuration, add it with showIn:[]'
           }`
         );

@@ -11,6 +11,7 @@
   "description": "",
   "dependencies": {
     "@types/papaparse": "^5.3.15",
-    "papaparse": "^5.5.2"
+    "papaparse": "^5.5.2",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   }
 }

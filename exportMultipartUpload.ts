@@ -1,6 +1,8 @@
 import { AdminForthDataTypes, AdminForthSortDirections, Filters } from 'adminforth';
 import type { AdminForthResourceColumn, AdminUser, IAdminForthSort } from 'adminforth';
 import { stringify } from 'csv/sync';
+import ExcelJS from 'exceljs';
+import { Writable } from 'node:stream';
 import type BackgroundJobsPlugin from '@adminforth/background-jobs';
 import type ImportExportPlugin from './index.js';
 
@@ -15,18 +17,46 @@ const PROGRESS_PUBLISH_INTERVAL_MS = 1000;
 const CANCELLATION_CHECK_INTERVAL_MS = 2000;
 /** Lifetime of the presigned download link handed to the browser. */
 const DOWNLOAD_URL_EXPIRES_IN_SECONDS = 3600;
+/** Excel's worksheet limit includes the header row. */
+const MAX_XLSX_DATA_ROWS_PER_SHEET = 1_048_575;
 
 type TaskState = {
   filters: any;
   sort: IAdminForthSort[];
   fileKey: string;
   fileName: string;
+  fileFormat: 'csv' | 'xlsx';
 };
 
 type TaskHandlerParams = {
   jobId: string;
   getState: () => Promise<Record<string, any>>;
 };
+
+type ObjectWriter = {
+  write(data: string | Buffer | Uint8Array): Promise<void>;
+  close(): Promise<void>;
+  abort(): Promise<void>;
+};
+
+/** Bridges the storage adapter's async writer to the Node stream expected by ExcelJS. */
+class StorageAdapterWritable extends Writable {
+  constructor(private readonly writer: ObjectWriter) {
+    super();
+  }
+
+  override _write(
+    chunk: Buffer | string,
+    encoding: BufferEncoding,
+    callback: (error?: Error | null) => void,
+  ): void {
+    const data = typeof chunk === 'string' ? Buffer.from(chunk, encoding) : chunk;
+    this.writer.write(data).then(
+      () => callback(),
+      (error) => callback(error instanceof Error ? error : new Error(String(error))),
+    );
+  }
+}
 
 /**
  * ✅Columns which end up in the exported file. Mirrors {@link ImportExportPlugin.exportCsv}.
@@ -55,7 +85,7 @@ function getExportColumns(plugin: ImportExportPlugin): {
  * ✅Turns a record into an array of CSV cells. `null` is returned for empty cells so that
  * csv-stringify renders them as an empty unquoted value.
  */
-function serializeRow(columns: AdminForthResourceColumn[], row: Record<string, any>): (string | null)[] {
+function serializeCsvRow(columns: AdminForthResourceColumn[], row: Record<string, any>): (string | null)[] {
   return columns.map((col) => {
     const value = row[col.name];
     if (value === null || value === undefined) {
@@ -66,6 +96,23 @@ function serializeRow(columns: AdminForthResourceColumn[], row: Record<string, a
     }
     if (value instanceof Date) {
       return value.toISOString();
+    }
+    return `${value}`;
+  });
+}
+
+/** Preserves native spreadsheet types while serializing complex resource values as JSON. */
+function serializeXlsxRow(columns: AdminForthResourceColumn[], row: Record<string, any>): (string | number | boolean | Date | null)[] {
+  return columns.map((col) => {
+    const value = row[col.name];
+    if (value === null || value === undefined) {
+      return null;
+    }
+    if (col.type === AdminForthDataTypes.JSON || col.isArray?.enabled) {
+      return JSON.stringify(value);
+    }
+    if (value instanceof Date || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      return value;
     }
     return `${value}`;
   });
@@ -170,7 +217,7 @@ export async function runExportCsvJob(
   { jobId, getState }: TaskHandlerParams,
 ): Promise<void> {
   const backgroundJobsPlugin = getBackgroundJobsPlugin(plugin);
-  const { filters, sort, fileKey } = (await getState()) as TaskState;
+  const { filters, sort, fileKey, fileFormat } = (await getState()) as TaskState;
   const { storageAdapter, bufferSizeMb, readChunkSize } = plugin.options.exportViaUpload;
   const chunkSize = readChunkSize ?? DEFAULT_READ_CHUNK_SIZE;
 
@@ -180,10 +227,20 @@ export async function runExportCsvJob(
   const stableSort = buildStableSort(plugin, sort);
   //get columns, fields in format like: ['id', 'name', 'email', 'balance'] and columnsToForceQuote in format like: [false, true, true, false]
   const { columns, fields, columnsToForceQuote } = getExportColumns(plugin);
+  const isXlsx = (fileFormat ?? plugin.options.fileFormat) === 'xlsx';
 
   const estimatedTotal: number = (await backgroundJobsPlugin.getJobStateField(jobId, 'totalRows')) ?? 0;
 
-  const writer = await storageAdapter.createWriteStream(fileKey, 'text/csv', bufferSizeMb);
+  const contentType = isXlsx
+    ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    : 'text/csv';
+  const writer = await storageAdapter.createWriteStream(fileKey, contentType, bufferSizeMb);
+  let xlsxStream: StorageAdapterWritable | undefined;
+  let xlsxWorkbook: ExcelJS.stream.xlsx.WorkbookWriter | undefined;
+  let xlsxWorksheet: ExcelJS.Worksheet | undefined;
+  let xlsxStreamError: Error | undefined;
+  let xlsxSheetNumber = 0;
+  let xlsxDataRowsInSheet = 0;
 
   let exportedRows = 0;
   let lastProgressPublishedAt = 0;
@@ -191,9 +248,25 @@ export async function runExportCsvJob(
   let cancelled = false;
 
   try {
-    // BOM keeps Excel happy with non-ASCII values
-    // Add this symbol to the beginning of the file to indicate that it is UTF-8 encoded. (requred for some versions of Excel for some reason. Without this symbol encoding can be broken)
-    await writer.write('﻿' + buildCsvChunk([fields], columnsToForceQuote));
+    if (isXlsx) {
+      xlsxStream = new StorageAdapterWritable(writer);
+      // Attach immediately because the archive starts writing before workbook.commit().
+      xlsxStream.on('error', (error) => {
+        xlsxStreamError = error;
+      });
+      xlsxWorkbook = new ExcelJS.stream.xlsx.WorkbookWriter({
+        stream: xlsxStream,
+        useSharedStrings: false,
+        useStyles: false,
+      });
+      xlsxSheetNumber = 1;
+      xlsxWorksheet = xlsxWorkbook.addWorksheet('Export');
+      xlsxWorksheet.addRow(fields).commit();
+    } else {
+      // BOM keeps Excel-compatible CSV readers from misdetecting UTF-8 text.
+      await writer.write('﻿' + buildCsvChunk([fields], columnsToForceQuote));
+    }
+
     for (let offset = 0; ; offset += chunkSize) {
       const { data } = await connector.getData({
         resource: plugin.resourceConfig,
@@ -206,7 +279,24 @@ export async function runExportCsvJob(
 
 
       if (data.length) {
-        await writer.write(buildCsvChunk(data.map((row) => serializeRow(columns, row)), columnsToForceQuote));
+        if (xlsxWorksheet) {
+          data.forEach((row) => {
+            if (xlsxDataRowsInSheet === MAX_XLSX_DATA_ROWS_PER_SHEET) {
+              xlsxWorksheet.commit();
+              xlsxSheetNumber++;
+              xlsxWorksheet = xlsxWorkbook.addWorksheet(`Export ${xlsxSheetNumber}`);
+              xlsxWorksheet.addRow(fields).commit();
+              xlsxDataRowsInSheet = 0;
+            }
+            xlsxWorksheet.addRow(serializeXlsxRow(columns, row)).commit();
+            xlsxDataRowsInSheet++;
+          });
+          if (xlsxStreamError) {
+            throw xlsxStreamError;
+          }
+        } else {
+          await writer.write(buildCsvChunk(data.map((row) => serializeCsvRow(columns, row)), columnsToForceQuote));
+        }
         exportedRows += data.length;
       }
 
@@ -235,14 +325,25 @@ export async function runExportCsvJob(
     }
 
     if (cancelled) {
+      // Finalize the ZIP stream so all pending writes settle before aborting the multipart upload.
+      if (xlsxWorkbook) {
+        await xlsxWorkbook.commit();
+      }
       await abortQuietly(writer, fileKey);
       await backgroundJobsPlugin.setJobStateField(jobId, 'exportedRows', exportedRows);
       return;
     }
 
+    if (xlsxWorkbook) {
+      await xlsxWorkbook.commit();
+      if (xlsxStreamError) {
+        throw xlsxStreamError;
+      }
+    }
     await writer.close();
   } catch (e) {
     // leaves no dangling multipart upload behind
+    xlsxStream?.destroy();
     await abortQuietly(writer, fileKey);
     throw e;
   }
@@ -253,7 +354,7 @@ export async function runExportCsvJob(
 }
 
 /**
- * ✅Creates the background job which exports the resource into a CSV file in the storage adapter.
+ * ✅Creates the background job which exports the resource into a CSV or XLSX file in the storage adapter.
  */
 export async function startExport(
   plugin: ImportExportPlugin,
@@ -271,21 +372,23 @@ export async function startExport(
 ): Promise<{ ok: boolean; jobId?: string; error?: string }> {
   const backgroundJobsPlugin = getBackgroundJobsPlugin(plugin);
   const resourceId = plugin.resourceConfig.resourceId;
+  const fileFormat = plugin.options.fileFormat ?? 'csv';
 
-  const fileName = `export-${resourceId}-${new Date().toISOString()}.csv`;
+  const fileName = `export-${resourceId}-${new Date().toISOString()}.${fileFormat}`;
   // job id is not known before the job is created, so the timestamped name is what makes the key unique
   const fileKey = `adminforth-import-export/${resourceId}/${fileName}`;
 
   const jobId = await backgroundJobsPlugin.startNewJob(
-    `Export ${resourceId} to CSV`,
+    `Export ${resourceId} to ${fileFormat.toUpperCase()}`,
     adminUser,
-    [{ state: { filters, sort, fileKey, fileName } as TaskState }],
+    [{ state: { filters, sort, fileKey, fileName, fileFormat } as TaskState }],
     `${EXPORT_CSV_JOB_HANDLER_NAME}-${plugin.pluginInstanceId}`,
     {
       pluginInstanceId: plugin.pluginInstanceId,
       resourceId,
       fileName,
       fileKey,
+      fileFormat,
       fileReady: false,
       exportedRows: 0,
       totalRows: totalRows ?? 0,

@@ -8,6 +8,12 @@ export interface PluginOptions extends PluginsCommonOptions {
   importEnabled?: boolean;
 
   /**
+   * File format used by import and export actions. Defaults to CSV.
+   * Both formats support classical export and background export via storage upload.
+   */
+  fileFormat?: 'csv' | 'xlsx';
+
+  /**
    * classicalUploadLimitMiB applied only to classical export. Switch to upload export to enable exporting high volumes of data
    * Before reading the whole dataset into RAM, a probe of the first records is fetched and their
    * serialized size is multiplied by the total count. If the estimate exceeds this limit, the export

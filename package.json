@@ -23,7 +23,7 @@
   ],
   "author": "DevForth (https://devforth.io)",
   "license": "MIT",
-  "description": "CSV import/export plugin for adminforth",
+  "description": "CSV and Excel import/export plugin for adminforth",
   "peerDependencies": {
     "adminforth": "^3.8.2"
   },
@@ -62,7 +62,13 @@
   },
   "dependencies": {
     "csv": "^6.6.1",
+    "exceljs": "^4.4.0",
     "p-limit": "^7.3.0",
     "zod": "^4.3.6"
+  },
+  "pnpm": {
+    "overrides": {
+      "exceljs>uuid": "^11.1.1"
+    }
   }
 }

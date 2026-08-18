@@ -8,8 +8,8 @@ Allows to add import/export to csv options to an adminforth table.
 
 ## Features
 
-- Import records into AdminForth tables from CSV files.
-- Export table data for external processing and reporting.
+- Import records into AdminForth tables from CSV or Excel files.
+- Export table data to CSV or Excel for external processing and reporting.
 - Speed up bulk data operations in the admin panel.
 - Support operational workflows around large datasets.
 
@@ -28,6 +28,16 @@ new ImportExport({
 ```
 
 Import is enabled by default for backward compatibility. Disabling it removes the import action from the UI and does not register the import-related HTTP endpoints.
+
+To import and export Excel workbooks instead of CSV files, set `fileFormat` for the resource:
+
+```ts
+new ImportExport({
+  fileFormat: 'xlsx',
+})
+```
+
+CSV remains the default file format. Both formats support `exportViaUpload` for large background exports. XLSX exports that exceed Excel's per-worksheet row limit are split across worksheets, and imports combine worksheets when their columns match.
 
 ## About AdminForth
 

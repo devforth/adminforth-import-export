@@ -26,7 +26,7 @@
       :loader="downloading"
       @click="download"
     >
-      {{ $t('Download CSV') }}
+      {{ fileFormat === 'xlsx' ? $t('Download Excel') : $t('Download CSV') }}
     </Button>
   </div>
 </template>
@@ -63,6 +63,7 @@ const exportedRows = computed(() => props.job.state?.exportedRows ?? 0);
 const totalRows = computed(() => props.job.state?.totalRows ?? 0);
 const fileName = computed(() => props.job.state?.fileName ?? '');
 const fileReady = computed(() => !!props.job.state?.fileReady);
+const fileFormat = computed(() => fileName.value.toLowerCase().endsWith('.xlsx') ? 'xlsx' : 'csv');
 
 async function download() {
   downloading.value = true;

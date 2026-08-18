@@ -4,7 +4,7 @@
       'cursor-pointer flex gap-2 items-center',
       checkProgress ? 'opacity-50 pointer-events-none' : ''
     ]">
-      {{$t('Import from CSV')}}
+      {{ fileFormat === 'xlsx' ? $t('Import from Excel') : $t('Import from CSV') }}
     </div>
     <div v-if="checkProgress" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-20">
       <div class="flex flex-col items-center bg-white dark:bg-gray-800 p-6 rounded-lg shadow-lg">
@@ -63,11 +63,12 @@ const importProgress: Ref<boolean> = ref(false);
 const checkProgress: Ref<boolean> = ref(false);
 const confirmDialog = ref(null);
 const importStats = ref(null);
-const pendingData = ref(null);
+const pendingData = ref<Record<string, unknown[]> | null>(null);
 const props = defineProps({
   meta: Object,
   record: Object,
 });
+const fileFormat = props.meta?.fileFormat === 'xlsx' ? 'xlsx' : 'csv';
 const computedButtons = computed(() => {
   if (!importStats.value) return [];
 
@@ -86,7 +87,7 @@ async function confirmImport(dialog) {
   dialog.hide();
 }
 
-async function checkRecords(data: Record<string, string[]>) {
+async function checkRecords(data: Record<string, unknown[]>) {
   checkProgress.value = true;
   const resp = await callAdminForthApi({
     path: `/plugin/${props.meta.pluginInstanceId}/check-records`,
@@ -102,7 +103,7 @@ async function confirmImportNewOnly(dialog) {
   dialog.hide();
 }
 
-async function postData(data: Record<string, string[]>, skipDuplicates: boolean = false) {
+async function postData(data: Record<string, unknown[]>) {
   importProgress.value = true;
   const resp = await callAdminForthApi({
     path: `/plugin/${props.meta.pluginInstanceId}/import-csv`,
@@ -125,7 +126,7 @@ async function postData(data: Record<string, string[]>, skipDuplicates: boolean 
   adminforth.list.closeThreeDotsDropdown();
 }
 
-async function postDataNewOnly(data: Record<string, string[]>) {
+async function postDataNewOnly(data: Record<string, unknown[]>) {
   importProgress.value = true;
   const resp = await callAdminForthApi({
     path: `/plugin/${props.meta.pluginInstanceId}/import-csv-new-only`,
@@ -145,79 +146,98 @@ async function postDataNewOnly(data: Record<string, string[]>) {
   adminforth.list.closeThreeDotsDropdown();
 }
 
-async function importCsv() {
+async function prepareImport(rows: Record<string, unknown>[], formatLabel: string) {
+  if (rows.length === 0) {
+    throw new Error(`No data rows found in ${formatLabel}`);
+  }
+
+  const data: Record<string, unknown[]> = {};
+  Object.keys(rows[0]).forEach(column => {
+    data[column] = rows.map(row => row[column]);
+  });
+
+  pendingData.value = data;
+  importStats.value = await checkRecords(data);
+  confirmDialog.value?.open();
+}
+
+async function parseCsv(file: File) {
+  const results = Papa.parse<Record<string, string>>(await file.text(), {
+    header: true,
+    skipEmptyLines: true,
+    // Do not enable dynamicTyping: values such as string IDs must remain strings.
+  });
+
+  if (results.errors.length > 0) {
+    const firstError = results.errors[0];
+    const row = typeof firstError.row === 'number' ? firstError.row + 1 : '?';
+    throw new Error(`CSV parsing error at row ${row}: ${firstError.message || 'Unknown error'}`);
+  }
+
+  await prepareImport(results.data, 'CSV');
+}
+
+async function parseXlsx(file: File) {
+  const XLSX = await import('xlsx');
+  const workbook = XLSX.read(await file.arrayBuffer(), {
+    type: 'array',
+    cellDates: true,
+  });
+  if (workbook.SheetNames.length === 0) {
+    throw new Error('No worksheets found in Excel file');
+  }
+
+  const allRows: Record<string, unknown>[] = [];
+  let expectedColumns: string[] | undefined;
+  for (const sheetName of workbook.SheetNames) {
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(
+      workbook.Sheets[sheetName],
+      { defval: '', raw: true },
+    );
+    if (rows.length === 0) {
+      continue;
+    }
+    const columns = Object.keys(rows[0]);
+    if (expectedColumns && columns.join('\0') !== expectedColumns.join('\0')) {
+      throw new Error(`Worksheet '${sheetName}' has different columns`);
+    }
+    expectedColumns = columns;
+    rows.forEach(row => allRows.push(row));
+  }
+  await prepareImport(allRows, 'Excel file');
+}
+
+async function importFile() {
   const fileInput = document.createElement('input');
-
   fileInput.type = 'file';
-  fileInput.accept = '.csv';
-  fileInput.click();
+  fileInput.accept = fileFormat === 'xlsx' ? '.xlsx' : '.csv';
   fileInput.onchange = async (e) => {
-
     const file = (e.target as HTMLInputElement).files?.[0];
     if (!file) {
       return;
     }
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      try {
-        const text = e.target.result as string;
-        
-        Papa.parse(text, {
-          header: true,
-          skipEmptyLines: true,
-          // dynamicTyping: true, - bad option becaue it tries to parse "1" -> int even if the column is string 
-
-          complete: async (results) => {
-            if (results.errors.length > 0) {
-              adminforth.alert({
-                message: `CSV parsing errors at row ${results.errors[0]?.row + 1 || '?'}: ${results.errors[0]?.message || 'Unknown error'}`,
-                variant: 'danger'
-              });
-              throw new Error(`CSV parsing errors: ${results.errors.map(e => e.message).join(', ')}`);
-            }
-            const data: Record<string, string[]> = {};
-            const rows = results.data as Record<string, string>[];
-            
-            if (rows.length === 0) {
-              adminforth.alert({
-                message: `No data rows found in CSV`,
-                variant: 'danger'
-              });
-              throw new Error('No data rows found in CSV');
-            }
-            Object.keys(rows[0]).forEach(column => {
-              data[column] = rows.map(row => row[column]);
-            });
-
-            // Store data for later use
-            pendingData.value = data;
-
-            // Check records and show confirmation
-            const stats = await checkRecords(data);
-            importStats.value = stats;
-            confirmDialog.value?.open();
-          },
-          error: (error) => {
-            adminforth.alert({
-                message: `CSV parsing errors: ${error.message}}`,
-                variant: 'danger'
-            });
-            throw new Error(`Failed to parse CSV: ${error.message}`);
-          }
-        });
-      } catch (error) {
-        adminforth.alert({
-          message: `Error processing CSV: ${error.message}`,
-          variant: 'danger'
-        });
+    try {
+      const expectedExtension = `.${fileFormat}`;
+      if (!file.name.toLowerCase().endsWith(expectedExtension)) {
+        throw new Error(`Unsupported file type. Select a ${expectedExtension} file.`);
       }
-    };
-    reader.readAsText(file);
+      if (fileFormat === 'xlsx') {
+        await parseXlsx(file);
+      } else {
+        await parseCsv(file);
+      }
+    } catch (error) {
+      adminforth.alert({
+        message: error instanceof Error ? error.message : 'Failed to process import file',
+        variant: 'danger',
+      });
+    }
   };
+  fileInput.click();
 }
 
 
 function click() {
-  importCsv();
+  importFile();
 }
 </script>
