@@ -39,6 +39,23 @@ new ImportExport({
 
 CSV remains the default file format. Both formats support `exportViaUpload` for large background exports. XLSX exports that exceed Excel's per-worksheet row limit are split across worksheets, and imports combine worksheets when their columns match.
 
+By default every column except virtual and `backendOnly` ones is exported. Pass an exact, ordered list to choose what the file holds — virtual columns included, filled by the export hook:
+
+```ts
+new ImportExport({
+  columnsToExport: ['id', 'model', 'price', 'owner_email'], // owner_email is virtual
+  hooks: {
+    export: {
+      beforeWrite: async ({ records }) => {
+        records.forEach((record) => { record.owner_email = /* ... */ ''; });
+      },
+    },
+  },
+})
+```
+
+`hooks.export.beforeWrite` runs right before records are serialized, in both classical and upload export, and can transform values, fill virtual columns, drop records, or abort the export by returning `{ ok: false, error }`.
+
 ## About AdminForth
 
 AdminForth is an open-source, agent-first admin framework for building robust admin panels and back-office applications faster.

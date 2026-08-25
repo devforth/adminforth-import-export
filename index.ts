@@ -1,6 +1,6 @@
 import { AdminForthPlugin, suggestIfTypo, AdminForthFilterOperators, Filters, AdminForthDataTypes, rejectApiRawFilters, interpretResource, ActionCheckSource, AllowedActionsEnum } from "adminforth";
 import type { IAdminForth, IHttpServer, AdminForthResourceColumn, AdminForthComponentDeclaration, AdminForthResource, AdminUser, HttpExtra, IAdminForthHttpResponse } from "adminforth";
-import type { PluginOptions } from './types.js';
+import type { BeforeExportWriteFunction, PluginOptions } from './types.js';
 import type BackgroundJobsPlugin from '@adminforth/background-jobs';
 import pLimit from 'p-limit';
 import { z } from "zod";
@@ -185,6 +185,8 @@ export default class ImportExport extends AdminForthPlugin {
     if (this.options.fileFormat && !['csv', 'xlsx'].includes(this.options.fileFormat)) {
       throw new Error(`fileFormat must be either 'csv' or 'xlsx', got '${this.options.fileFormat}'`);
     }
+    this.validateColumnsToExport();
+    this.validateExportHooks();
     try {
       this.auditLogPlugin = this.adminforth.getPluginByClassName('AuditLogPlugin');
     } catch (e) {
@@ -237,6 +239,64 @@ export default class ImportExport extends AdminForthPlugin {
           },
         },
       })
+    }
+  }
+
+  private validateColumnsToExport() {
+    const names = this.options.columnsToExport;
+    if (names === undefined) {
+      return;
+    }
+    if (!Array.isArray(names)) {
+      throw new Error(`columnsToExport must be an array of column names, got '${typeof names}'`);
+    }
+    if (names.length === 0) {
+      throw new Error('columnsToExport must name at least one column, remove the option to export all columns');
+    }
+
+    const seen = new Set<string>();
+    for (const name of names) {
+      if (seen.has(name)) {
+        throw new Error(`Column '${name}' is listed in columnsToExport more than once`);
+      }
+      seen.add(name);
+
+      const column = this.resourceConfig.columns.find((col) => col.name === name);
+      if (!column) {
+        const similar = suggestIfTypo(this.resourceConfig.columns.map((col) => col.name), name);
+        throw new Error(
+          `Column '${name}' from columnsToExport not found in resource '${this.resourceConfig.resourceId}'.`
+          + (similar ? ` Did you mean '${similar}'?` : '')
+        );
+      }
+      if (column.backendOnly) {
+        throw new Error(
+          `Column '${name}' from columnsToExport is backendOnly and can't be exported. `
+          + `Drop backendOnly from the column or remove it from columnsToExport`
+        );
+      }
+    }
+
+    const virtualNames = names.filter(
+      (name) => this.resourceConfig.columns.find((col) => col.name === name)?.virtual
+    );
+    if (virtualNames.length && !this.options.hooks?.export?.beforeWrite) {
+      console.warn(
+        `ImportExport: resource '${this.resourceConfig.resourceId}' exports virtual column(s) `
+        + `${virtualNames.map((name) => `'${name}'`).join(', ')} but has no hooks.export.beforeWrite `
+        + `to fill them, so these columns will be empty in the file`
+      );
+    }
+  }
+
+  private validateExportHooks() {
+    const hooks = this.options.hooks?.export?.beforeWrite;
+    if (hooks === undefined) {
+      return;
+    }
+    const hookList = Array.isArray(hooks) ? hooks : [hooks];
+    if (hookList.some((hook) => typeof hook !== 'function')) {
+      throw new Error('hooks.export.beforeWrite must be a function or an array of functions');
     }
   }
 
@@ -444,6 +504,62 @@ export default class ImportExport extends AdminForthPlugin {
     })
   }
 
+  /** Resolves the ordered columns shared by both export modes. */
+  public getExportColumns(): {
+    columns: AdminForthResourceColumn[];
+    fields: string[];
+    columnsToForceQuote: boolean[];
+  } {
+    const selected = this.options.columnsToExport;
+    const columns = (selected
+      ? selected
+        .map((name) => this.resourceConfig.columns.find((col) => col.name === name))
+        .filter((col): col is AdminForthResourceColumn => !!col)
+      : this.resourceConfig.columns.filter((col) => !col.virtual)
+    ).filter((col) => !col.backendOnly);
+
+    return {
+      columns,
+      fields: columns.map((col) => col.name),
+      columnsToForceQuote: columns.map((col) => (
+        col.type !== AdminForthDataTypes.FLOAT
+        && col.type !== AdminForthDataTypes.INTEGER
+        && col.type !== AdminForthDataTypes.BOOLEAN
+        && col.type !== AdminForthDataTypes.DECIMAL
+      )),
+    };
+  }
+
+  public async runBeforeExportWriteHooks(
+    params: {
+      records: Record<string, any>[];
+      columns: AdminForthResourceColumn[];
+      exportMode: 'classical' | 'upload';
+      batchOffset: number;
+      adminUser?: AdminUser;
+    }
+  ): Promise<{ ok: boolean; error?: string }> {
+    const hooks = this.options.hooks?.export?.beforeWrite;
+    const hookList: BeforeExportWriteFunction[] = Array.isArray(hooks) ? hooks : (hooks ? [hooks] : []);
+    if (!hookList.length) {
+      return { ok: true };
+    }
+
+    for (const hook of hookList) {
+      const resp = await hook({
+        ...params,
+        resource: this.resourceConfig,
+        adminforth: this.adminforth,
+        fileFormat: this.options.fileFormat ?? 'csv',
+      });
+      if (resp && (resp.ok === false || resp.error)) {
+        return { ok: false, error: resp.error ?? 'Export was rejected by hooks.export.beforeWrite' };
+      }
+    }
+
+    return { ok: true };
+  }
+
   /**
    * Approximates how much the full result set of the given query will weigh, without reading it.
    * A small probe of records is fetched and its serialized size is multiplied by the total count.
@@ -468,7 +584,16 @@ export default class ImportExport extends AdminForthPlugin {
       return { totalRows, serializedMiB: 0, ramMiB: 0 };
     }
 
-    const bytesPerRow = Buffer.byteLength(JSON.stringify(probe.data), 'utf8') / probe.data.length;
+    const { fields } = this.getExportColumns();
+    const probeRows = probe.data.map((row) => {
+      const exportedOnly: Record<string, any> = {};
+      for (const field of fields) {
+        exportedOnly[field] = row[field];
+      }
+      return exportedOnly;
+    });
+
+    const bytesPerRow = Buffer.byteLength(JSON.stringify(probeRows), 'utf8') / probe.data.length;
     const serializedMiB = (bytesPerRow * totalRows) / 1024 / 1024;
 
     return { totalRows, serializedMiB, ramMiB: serializedMiB * RAM_OVERHEAD_FACTOR };
@@ -511,15 +636,18 @@ export default class ImportExport extends AdminForthPlugin {
     });
 
     // prepare data for PapaParse unparse
-    const columns = this.resourceConfig.columns.filter((col) => !col.virtual && !col.backendOnly);
+    const { columns, fields, columnsToForceQuote } = this.getExportColumns();
 
-    const columnsToForceQuote = columns.map(col => {
-      return col.type !== AdminForthDataTypes.FLOAT
-        && col.type !== AdminForthDataTypes.INTEGER
-        && col.type !== AdminForthDataTypes.BOOLEAN;
+    const hooksResult = await this.runBeforeExportWriteHooks({
+      records: data.data,
+      columns,
+      exportMode: 'classical',
+      batchOffset: 0,
+      adminUser,
     });
-
-    const fields = columns.map((col) => col.name);
+    if (!hooksResult.ok) {
+      return { ok: false, error: hooksResult.error };
+    }
 
     const rows = data.data.map((row) => {
       return columns.map((col) => {
@@ -539,7 +667,7 @@ export default class ImportExport extends AdminForthPlugin {
       ok: true,
       data: { fields, data: rows },
       columnsToForceQuote,
-      exportedCount: data.total,
+      exportedCount: rows.length,
     };
   }
 
@@ -700,6 +828,10 @@ export default class ImportExport extends AdminForthPlugin {
       .map(row => primaryKeyColumn ? row[primaryKeyColumn.name] : undefined)
       .filter(key => key !== undefined && key !== null && key !== '');
 
+    if (primaryKeys.length === 0) {
+      return { ok: true, total: rows.length, existingCount: 0, newCount: rows.length };
+    }
+
     const existingRecords = await this.adminforth
       .resource(this.resourceConfig.resourceId)
       .list([{
@@ -764,10 +896,17 @@ export default class ImportExport extends AdminForthPlugin {
       const row: Record<string, unknown> = {};
       for (let j = 0; j < columns.length; j++) {
         const val = columnValues[j][i];
-        const resourceCol = resourceColumns ? resourceColumns[j] : undefined;
+        const resourceCol = resourceColumns?.[j]
+          ?? this.resourceConfig.columns.find((col) => col.name === columns[j]);
+        if (resourceCol?.virtual) {
+          continue;
+        }
         row[columns[j]] = coerceTypes
           ? this.coerceValue(resourceCol, val)
           : val;
+      }
+      if (Object.keys(row).length === 0) {
+        continue;
       }
       rows.push(row);
     }

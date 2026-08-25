@@ -1,4 +1,17 @@
 import  {type PluginsCommonOptions, StorageAdapter } from "adminforth";
+import type { AdminForthResource, AdminForthResourceColumn, AdminUser, IAdminForth } from "adminforth";
+
+/** Runs before an export batch is serialized. Records may be mutated in place. */
+export type BeforeExportWriteFunction = (params: {
+  records: Record<string, any>[];
+  columns: AdminForthResourceColumn[];
+  resource: AdminForthResource;
+  adminforth: IAdminForth;
+  adminUser?: AdminUser;
+  fileFormat: 'csv' | 'xlsx';
+  exportMode: 'classical' | 'upload';
+  batchOffset: number;
+}) => Promise<{ ok?: boolean; error?: string } | void>;
 
 export interface PluginOptions extends PluginsCommonOptions {
   /**
@@ -21,6 +34,16 @@ export interface PluginOptions extends PluginsCommonOptions {
    * the serialized payload, while the same rows kept as JS objects take a few times more RAM.
    */
   classicalUploadLimitMiB?: number;
+
+  /** Exact ordered export columns. Virtual columns can be filled by `beforeWrite`. */
+  columnsToExport?: string[];
+
+  hooks?: {
+    export?: {
+      /** Runs before records are serialized. */
+      beforeWrite?: BeforeExportWriteFunction | Array<BeforeExportWriteFunction>;
+    },
+  };
 
   /**
    * If you are going to export a huge dataset - it can make your server run out of memory, because all exported records are stored in RAM

@@ -59,29 +59,6 @@ class StorageAdapterWritable extends Writable {
 }
 
 /**
- * ✅Columns which end up in the exported file. Mirrors {@link ImportExportPlugin.exportCsv}.
- */
-function getExportColumns(plugin: ImportExportPlugin): {
-  columns: AdminForthResourceColumn[];
-  fields: string[];
-  columnsToForceQuote: boolean[];
-} {
-  const columns = plugin.resourceConfig.columns.filter((col) => !col.virtual && !col.backendOnly);
-  return {
-    columns,
-    fields: columns.map((col) => col.name),
-    // numbers and booleans are left bare, everything else is quoted:
-    // quoting all columns breaks BI/Excel tasks
-    columnsToForceQuote: columns.map((col) => (
-      col.type !== AdminForthDataTypes.FLOAT
-      && col.type !== AdminForthDataTypes.INTEGER
-      && col.type !== AdminForthDataTypes.BOOLEAN
-      && col.type !== AdminForthDataTypes.DECIMAL
-    )),
-  };
-}
-
-/**
  * ✅Turns a record into an array of CSV cells. `null` is returned for empty cells so that
  * csv-stringify renders them as an empty unquoted value.
  */
@@ -160,6 +137,30 @@ async function getJobRecord(plugin: ImportExportPlugin, jobId: string): Promise<
   return await plugin.adminforth.resource(resourceId).get(Filters.EQ(pkColumn, jobId));
 }
 
+async function resolveJobAdminUser(plugin: ImportExportPlugin, jobId: string): Promise<AdminUser | undefined> {
+  try {
+    const backgroundJobsPlugin = getBackgroundJobsPlugin(plugin);
+    const jobRecord = await getJobRecord(plugin, jobId);
+    const pk = jobRecord?.[backgroundJobsPlugin.options.startedByField];
+    const authConfig = plugin.adminforth.config.auth;
+    const usersResource = plugin.adminforth.config.resources.find(
+      (res) => res.resourceId === authConfig?.usersResourceId,
+    );
+    if (!pk || !usersResource) {
+      return undefined;
+    }
+    const usersPkColumn = usersResource.columns.find((col) => col.primaryKey).name;
+    const dbUser = await plugin.adminforth.resource(usersResource.resourceId).get(Filters.EQ(usersPkColumn, pk));
+    if (!dbUser) {
+      return undefined;
+    }
+    return { pk, username: dbUser[authConfig.usernameField], dbUser };
+  } catch (e) {
+    console.error(`ImportExport: failed to resolve user who started export job ${jobId}:`, e);
+    return undefined;
+  }
+}
+
 /**
  * ✅Pagination by limit/offset is only stable when the sort is unambiguous, otherwise the database
  * is free to return the same record in two different chunks. Appending the primary key fixes it.
@@ -226,10 +227,14 @@ export async function runExportCsvJob(
   const normalizedFilters = connector.validateAndNormalizeInputFilters(filters);
   const stableSort = buildStableSort(plugin, sort);
   //get columns, fields in format like: ['id', 'name', 'email', 'balance'] and columnsToForceQuote in format like: [false, true, true, false]
-  const { columns, fields, columnsToForceQuote } = getExportColumns(plugin);
+  const { columns, fields, columnsToForceQuote } = plugin.getExportColumns();
   const isXlsx = (fileFormat ?? plugin.options.fileFormat) === 'xlsx';
 
   const estimatedTotal: number = (await backgroundJobsPlugin.getJobStateField(jobId, 'totalRows')) ?? 0;
+
+  const hookAdminUser = plugin.options.hooks?.export?.beforeWrite
+    ? await resolveJobAdminUser(plugin, jobId)
+    : undefined;
 
   const contentType = isXlsx
     ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -278,6 +283,22 @@ export async function runExportCsvJob(
       });
 
 
+      // Hooks may change data.length, so pagination uses the fetched count.
+      const fetchedCount = data.length;
+
+      if (fetchedCount) {
+        const hooksResult = await plugin.runBeforeExportWriteHooks({
+          records: data,
+          columns,
+          exportMode: 'upload',
+          batchOffset: offset,
+          adminUser: hookAdminUser,
+        });
+        if (!hooksResult.ok) {
+          throw new Error(hooksResult.error);
+        }
+      }
+
       if (data.length) {
         if (xlsxWorksheet) {
           data.forEach((row) => {
@@ -309,7 +330,7 @@ export async function runExportCsvJob(
         }
       }
 
-      const isLastChunk = data.length < chunkSize;
+      const isLastChunk = fetchedCount < chunkSize;
       if (!isLastChunk && now - lastProgressPublishedAt >= PROGRESS_PUBLISH_INTERVAL_MS) {
         lastProgressPublishedAt = now;
         await backgroundJobsPlugin.setJobStateField(jobId, 'exportedRows', exportedRows);
