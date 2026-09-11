@@ -65,10 +65,5 @@
     "exceljs": "^4.4.0",
     "p-limit": "^7.3.0",
     "zod": "^4.3.6"
-  },
-  "pnpm": {
-    "overrides": {
-      "exceljs>uuid": "^11.1.1"
-    }
   }
 }
