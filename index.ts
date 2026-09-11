@@ -1,4 +1,4 @@
-import { AdminForthPlugin, suggestIfTypo, AdminForthFilterOperators, Filters, AdminForthDataTypes, rejectApiRawFilters, interpretResource, ActionCheckSource, AllowedActionsEnum } from "adminforth";
+import { AdminForthPlugin, suggestIfTypo, AdminForthFilterOperators, Filters, AdminForthDataTypes, rejectApiRawFilters, recordWriteError, interpretResource, ActionCheckSource, AllowedActionsEnum } from "adminforth";
 import type { IAdminForth, IHttpServer, AdminForthResourceColumn, AdminForthComponentDeclaration, AdminForthResource, AdminUser, HttpExtra, IAdminForthHttpResponse } from "adminforth";
 import type { BeforeExportWriteFunction, PluginOptions } from './types.js';
 import type BackgroundJobsPlugin from '@adminforth/background-jobs';
@@ -55,18 +55,23 @@ export default class ImportExport extends AdminForthPlugin {
     this.options = options;
   }
 
-  private isRowValid(row: Record<string, unknown>): string[] {
-    let errors = [];
+  private async isRowValid(row: Record<string, unknown>, page: 'create' | 'edit', adminUser: AdminUser, meta: Record<string, unknown>): Promise<string[]> {
+    const errors: string[] = [];
+    // core passes the primary key as recordId, never as an updated field, so it is not gated here either
+    const primaryKeyName = this.resourceConfig.columns.find((c) => c.primaryKey)?.name;
+    const gatedRow = page === 'edit' && primaryKeyName
+      ? Object.fromEntries(Object.entries(row).filter(([name]) => name !== primaryKeyName))
+      : row;
+    const writeError = await recordWriteError(gatedRow, page, {
+      adminUser, resource: this.resourceConfig, meta, adminforth: this.adminforth,
+      source: page === 'edit' ? ActionCheckSource.EditRequest : ActionCheckSource.CreateRequest,
+    });
+    if (writeError) {
+      errors.push(writeError);
+    }
     for (const col of Object.keys(row)) {
       const resourceCol = this.resourceConfig.columns.find(c => c.name === col);
-      if (!resourceCol) {
-        errors.push(`Column '${col}' not found in resource configuration.`);
-        continue;
-      }    
-      if (resourceCol.backendOnly) {
-        errors.push(`Column '${col}' is backend only and cannot be imported.`);
-      }
-      if (resourceCol.enum && !resourceCol.enum.some(e => e.value === row[col])) {
+      if (resourceCol?.enum && !resourceCol.enum.some(e => e.value === row[col])) {
         errors.push(`Column '${col}' has an enum of [${resourceCol.enum.map(e => e.label).join(', ')}] but got value '${row[col]}'.`);
       }
     }
@@ -706,34 +711,40 @@ export default class ImportExport extends AdminForthPlugin {
 
     await Promise.all(rows.map((row) => limit(async () => {
       try {
-        const rowErrors = await this.isRowValid(row);
-        if (rowErrors.length > 0) {
-          errors.push(...rowErrors);
-          return;
-        }
         const recordId = primaryKeyColumn ? row[primaryKeyColumn.name] as string : undefined;
+        // create and edit have different column rules, so find out which one this row is before gating it
+        let oldRecord = null;
         if (primaryKeyColumn && recordId) {
           const existingRecord = await this.adminforth.resource(this.resourceConfig.resourceId)
             .list([Filters.EQ(primaryKeyColumn.name, recordId)]);
 
           if (existingRecord.length > 0) {
             const connector = this.adminforth.connectors[resource.dataSource];
-            const oldRecord = await connector.getRecordByPrimaryKey(resource, recordId);
+            oldRecord = await connector.getRecordByPrimaryKey(resource, recordId);
             if (!oldRecord) {
               errors.push(`Record with ${primaryKeyColumn.name} ${recordId} not found`);
               return;
             }
-            const { error } = await this.adminforth.updateResourceRecord({
-              resource, updates: row, adminUser, oldRecord, recordId, response,
-              extra,
-            });
-            if (error) {
-              errors.push(error);
-              return;
-            }
-            updatedCount++;
+          }
+        }
+        const rowErrors = oldRecord
+          ? await this.isRowValid(row, 'edit', adminUser, { requestBody: extra?.body, newRecord: row, oldRecord, pk: recordId })
+          : await this.isRowValid(row, 'create', adminUser, { requestBody: extra?.body });
+        if (rowErrors.length > 0) {
+          errors.push(...rowErrors);
+          return;
+        }
+        if (oldRecord) {
+          const { error } = await this.adminforth.updateResourceRecord({
+            resource, updates: row, adminUser, oldRecord, recordId, response,
+            extra,
+          });
+          if (error) {
+            errors.push(error);
             return;
           }
+          updatedCount++;
+          return;
         }
         await this.adminforth.createResourceRecord({
           resource: resource,
@@ -782,7 +793,7 @@ export default class ImportExport extends AdminForthPlugin {
 
     await Promise.all(rows.map((row) => limit(async () => {
       try {
-        const rowErrors = await this.isRowValid(row);
+        const rowErrors = await this.isRowValid(row, 'create', adminUser, { requestBody: extra?.body });
         if (rowErrors.length > 0) {
           errors.push(...rowErrors);
           return;
