@@ -25,7 +25,7 @@
   "license": "MIT",
   "description": "CSV and Excel import/export plugin for adminforth",
   "peerDependencies": {
-    "adminforth": "^3.8.2"
+    "adminforth": "^4.0.0"
   },
   "devDependencies": {
     "@adminforth/background-jobs": "^1.18.4",

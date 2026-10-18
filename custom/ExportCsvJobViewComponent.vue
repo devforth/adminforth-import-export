@@ -1,22 +1,22 @@
 <template>
   <div class="flex flex-col gap-3 w-full">
-    <div class="flex items-center justify-between gap-4 text-sm text-gray-700 dark:text-gray-200">
+    <div class="flex items-center justify-between gap-4 text-sm text-lightDialogBodyText dark:text-darkDialogBodyText">
       <span>
         {{ $t('Exported rows') }}:
-        <span class="font-semibold">{{ exportedRows.toLocaleString() }}</span>
+        <span class="font-medium tabular-nums text-lightDialogHeaderText dark:text-darkDialogHeaderText">{{ exportedRows.toLocaleString() }}</span>
         <template v-if="totalRows">
           / {{ totalRows.toLocaleString() }}
         </template>
       </span>
-      <span v-if="fileName" class="truncate text-xs text-gray-500 dark:text-gray-400" :title="fileName">
+      <span v-if="fileName" class="truncate font-mono text-xs text-lightListTablePaginationHelpText dark:text-darkListTablePaginationHelpText" :title="fileName">
         {{ fileName }}
       </span>
     </div>
 
-    <p v-if="job.status === 'CANCELLED'" class="text-sm text-gray-500 dark:text-gray-400">
+    <p v-if="job.status === 'CANCELLED'" class="text-sm text-lightListTablePaginationHelpText dark:text-darkListTablePaginationHelpText">
       {{ $t('Export was cancelled, the file was not saved.') }}
     </p>
-    <p v-else-if="job.state?.error" class="text-sm text-red-600 dark:text-red-400">
+    <p v-else-if="job.state?.error" class="text-sm text-lightInputErrorColor dark:text-darkInputErrorColor">
       {{ job.state.error }}
     </p>
 
@@ -26,6 +26,7 @@
       :loader="downloading"
       @click="download"
     >
+      <IconDownload v-if="!downloading" class="w-4 h-4" aria-hidden="true" />
       {{ fileFormat === 'xlsx' ? $t('Download Excel') : $t('Download CSV') }}
     </Button>
   </div>
@@ -34,6 +35,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
 import { Button } from '@/afcl';
+import { IconDownload } from '@iconify-prerendered/vue-lucide';
 import { callAdminForthApi } from '@/utils';
 import adminforth from '@/adminforth';
 import { useI18n } from 'vue-i18n';
