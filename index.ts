@@ -1,5 +1,5 @@
 import { AdminForthPlugin, suggestIfTypo, AdminForthFilterOperators, Filters, AdminForthDataTypes, rejectApiRawFilters, interpretResource, ActionCheckSource, AllowedActionsEnum } from "adminforth";
-import type { IAdminForth, IHttpServer, AdminForthResourceColumn, AdminForthComponentDeclaration, AdminForthResource, AdminUser, HttpExtra, IAdminForthHttpResponse } from "adminforth";
+import type { IAdminForth, IHttpServer, AdminForthResourceColumn, AdminForthComponentDeclaration, AdminForthResource, AdminUser, HttpExtra } from "adminforth";
 import type { BeforeExportWriteFunction, PluginOptions } from './types.js';
 import type BackgroundJobsPlugin from '@adminforth/background-jobs';
 import pLimit from 'p-limit';
@@ -365,7 +365,6 @@ export default class ImportExport extends AdminForthPlugin {
           return this.importCsv(data, {
             adminUser,
             headers,
-            response,
             extra: { body, query, headers, cookies, requestUrl, response },
           });
         }
@@ -682,10 +681,9 @@ export default class ImportExport extends AdminForthPlugin {
       adminUser?: AdminUser;
       headers?: Record<string, string>;
       extra?: HttpExtra;
-      response?: IAdminForthHttpResponse;
     } = {}
   ): Promise<{ ok: boolean; importedCount?: number; updatedCount?: number; errors: string[] }> {
-    const { adminUser, headers, extra, response } = options;
+    const { adminUser, headers, extra } = options;
     const columns = this.getColumnNames(data);
     const { errors, resourceColumns } = this.validateColumns(columns);
     const resource = this.adminforth.config.resources.find(r => r.resourceId === this.resourceConfig.resourceId);
@@ -724,7 +722,7 @@ export default class ImportExport extends AdminForthPlugin {
               return;
             }
             const { error } = await this.adminforth.updateResourceRecord({
-              resource, updates: row, adminUser, oldRecord, recordId, response,
+              resource, updates: row, adminUser, oldRecord, recordId,
               extra,
             });
             if (error) {
@@ -867,7 +865,7 @@ export default class ImportExport extends AdminForthPlugin {
           `Column '${col}' defined in import file not found in resource '${this.resourceConfig.resourceId}'. ${
             similar
               ? `If you mean '${similar}', rename it in the import file`
-              : 'If column is in database but not in resource configuration, add it with showIn:[]'
+              : 'If column is in database but not in resource configuration, add it with showIn: { all: false }'
           }`
         );
         return;
