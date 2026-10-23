@@ -733,12 +733,16 @@ export default class ImportExport extends AdminForthPlugin {
             return;
           }
         }
-        await this.adminforth.createResourceRecord({
+        const { error } = await this.adminforth.createResourceRecord({
           resource: resource,
           record: row,
           adminUser: adminUser,
           extra,
         });
+        if (error) {
+          errors.push(error);
+          return;
+        }
         importedCount++;
       } catch (e) {
         errors.push(e.message);
@@ -793,12 +797,16 @@ export default class ImportExport extends AdminForthPlugin {
             return;
           }
         }
-        await this.adminforth.createResourceRecord({
+        const { error } = await this.adminforth.createResourceRecord({
           resource: resource,
           record: row,
           adminUser: adminUser,
           extra,
         });
+        if (error) {
+          errors.push(error);
+          return;
+        }
         importedCount++;
       } catch (e) {
         errors.push(e.message);
