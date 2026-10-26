@@ -54,6 +54,7 @@ import { ref, Ref, computed, watch } from 'vue';
 import { callAdminForthApi } from '@/utils';
 import adminforth from '@/adminforth';
 import Papa from 'papaparse';
+import type { Cell, Row, Worksheet } from 'exceljs';
 import { Dialog, Modal, Spinner } from '@/afcl';
 import { IconUpload } from '@iconify-prerendered/vue-lucide';
 import { useI18n } from 'vue-i18n';
@@ -184,29 +185,54 @@ async function parseCsv(file: File) {
   await prepareImport(results.data, 'CSV');
 }
 
-async function parseXlsx(file: File) {
-  const XLSX = await import('xlsx');
-  const workbook = XLSX.read(await file.arrayBuffer(), {
-    type: 'array',
-    cellDates: true,
+// formula cells give their cached result, rich text and hyperlink cells their text, error cells like #N/A ''
+function xlsxCellValue(cell: Cell): unknown {
+  const value = cell.formula ? cell.result : cell.value;
+  if (value === null || value === undefined || (typeof value === 'object' && 'error' in value)) {
+    return '';
+  }
+  return typeof value === 'object' && !(value instanceof Date) ? cell.text : value;
+}
+
+// the first non-empty row names the columns, a cell missing in a data row becomes ''
+function xlsxWorksheetRows(worksheet: Worksheet): Record<string, unknown>[] {
+  const sheetRows: Row[] = [];
+  worksheet.eachRow((row) => {
+    sheetRows.push(row);
   });
-  if (workbook.SheetNames.length === 0) {
+  if (sheetRows.length === 0) {
+    return [];
+  }
+
+  const [headerRow, ...dataRows] = sheetRows;
+  const columns: [number, string][] = [];
+  headerRow.eachCell((cell, columnNumber) => {
+    columns.push([columnNumber, cell.text]);
+  });
+  return dataRows.map(row => Object.fromEntries(
+    columns.map(([columnNumber, column]) => [column, xlsxCellValue(row.getCell(columnNumber))]),
+  ));
+}
+
+async function parseXlsx(file: File) {
+  // exceljs is a CommonJS bundle: its API is the default export of the dynamic import
+  const { default: ExcelJS } = await import('exceljs');
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(await file.arrayBuffer());
+  if (workbook.worksheets.length === 0) {
     throw new Error('No worksheets found in Excel file');
   }
 
   const allRows: Record<string, unknown>[] = [];
   let expectedColumns: string[] | undefined;
-  for (const sheetName of workbook.SheetNames) {
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(
-      workbook.Sheets[sheetName],
-      { defval: '', raw: true },
-    );
+  for (const worksheet of workbook.worksheets) {
+    const rows = xlsxWorksheetRows(worksheet);
     if (rows.length === 0) {
       continue;
     }
     const columns = Object.keys(rows[0]);
     if (expectedColumns && columns.join('\0') !== expectedColumns.join('\0')) {
-      throw new Error(`Worksheet '${sheetName}' has different columns`);
+      throw new Error(`Worksheet '${worksheet.name}' has different columns`);
     }
     expectedColumns = columns;
     rows.forEach(row => allRows.push(row));

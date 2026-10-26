@@ -193,13 +193,12 @@ async function exportFile(select: string) {
 
     const filenameBase = `export-${coreStore.resource?.resourceId}-${new Date().toISOString()}`;
     if (fileFormat === 'xlsx') {
-      const XLSX = await import('xlsx');
-      const worksheet = XLSX.utils.aoa_to_sheet([resp.data.fields, ...resp.data.data]);
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'Export');
-      const xlsxContent = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+      // exceljs is a CommonJS bundle: its API is the default export of the dynamic import
+      const { default: ExcelJS } = await import('exceljs');
+      const workbook = new ExcelJS.Workbook();
+      workbook.addWorksheet('Export').addRows([resp.data.fields, ...resp.data.data]);
       downloadFile(
-        xlsxContent,
+        await workbook.xlsx.writeBuffer(),
         `${filenameBase}.xlsx`,
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       );
