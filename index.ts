@@ -303,7 +303,7 @@ export default class ImportExport extends AdminForthPlugin {
   instanceUniqueRepresentation(pluginOptions: any) : string {
     // optional method to return unique string representation of plugin instance. 
     // Needed if plugin can have multiple instances on one resource 
-    return `${this.pluginInstanceId}`;
+    return 'single';
   }
 
   setupEndpoints(server: IHttpServer) {
