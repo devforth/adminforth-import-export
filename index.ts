@@ -345,6 +345,7 @@ export default class ImportExport extends AdminForthPlugin {
       server.endpoint({
         method: 'POST',
         path: `/plugin/${this.pluginInstanceId}/import-csv`,
+        agent: { requiresHumanApproval: true },
         request_schema: importCsvBodySchema,
         handler: async ({ body, adminUser, query, headers, cookies, requestUrl, response }) => {
           const { data } = body as z.infer<typeof importCsvBodySchema>;
