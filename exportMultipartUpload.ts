@@ -222,9 +222,8 @@ export async function runExportCsvJob(
   const { storageAdapter, bufferSizeMb, readChunkSize } = plugin.options.exportViaUpload;
   const chunkSize = readChunkSize ?? DEFAULT_READ_CHUNK_SIZE;
 
-  const connector = plugin.adminforth.connectors[plugin.resourceConfig.dataSource];
-  //normalize filters and sort 
-  const normalizedFilters = connector.validateAndNormalizeInputFilters(filters);
+  // the row-scoping hooks add their conditions to the filters of a read, so every chunk gets a copy
+  const chunkFilters = () => (Array.isArray(filters) ? [...filters] : filters);
   const stableSort = buildStableSort(plugin, sort);
   //get columns, fields in format like: ['id', 'name', 'email', 'balance'] and columnsToForceQuote in format like: [false, true, true, false]
   const { columns, fields, columnsToForceQuote } = plugin.getExportColumns();
@@ -232,9 +231,12 @@ export async function runExportCsvJob(
 
   const estimatedTotal: number = (await backgroundJobsPlugin.getJobStateField(jobId, 'totalRows')) ?? 0;
 
-  const hookAdminUser = plugin.options.hooks?.export?.beforeWrite
-    ? await resolveJobAdminUser(plugin, jobId)
-    : undefined;
+  // the job reads as the user who started it, so the file holds exactly the rows of their list
+  const jobAdminUser = await resolveJobAdminUser(plugin, jobId);
+  if (!jobAdminUser) {
+    throw new Error(`ImportExport: cannot resolve the user who started export job ${jobId}`);
+  }
+  const reader = plugin.recordsReader(jobAdminUser);
 
   const contentType = isXlsx
     ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -273,14 +275,7 @@ export async function runExportCsvJob(
     }
 
     for (let offset = 0; ; offset += chunkSize) {
-      const { data } = await connector.getData({
-        resource: plugin.resourceConfig,
-        limit: chunkSize,
-        offset,
-        filters: normalizedFilters,
-        sort: stableSort,
-        getTotals: false,
-      });
+      const data = await reader.list(chunkFilters(), chunkSize, offset, stableSort);
 
 
       // Hooks may change data.length, so pagination uses the fetched count.
@@ -292,7 +287,7 @@ export async function runExportCsvJob(
           columns,
           exportMode: 'upload',
           batchOffset: offset,
-          adminUser: hookAdminUser,
+          adminUser: jobAdminUser,
         });
         if (!hooksResult.ok) {
           throw new Error(hooksResult.error);

@@ -42,6 +42,19 @@ const importCsvBodySchema = z.object({
   data: z.record(z.string(), z.array(z.unknown())),
 }).strict();
 
+/** A CSV keeps an empty cell where the record has no value. */
+function isEmptyCell(value: unknown): boolean {
+  return value === null || value === undefined || value === '';
+}
+
+/** JSON and array columns come back from the CSV parsed, so values are compared by content. */
+function importedValueIsUnchanged(imported: unknown, stored: unknown): boolean {
+  if (isEmptyCell(imported) && isEmptyCell(stored)) {
+    return true;
+  }
+  return JSON.stringify(imported) === JSON.stringify(stored);
+}
+
 export default class ImportExport extends AdminForthPlugin {
   options: PluginOptions;
   emailField: AdminForthResourceColumn;
@@ -143,6 +156,28 @@ export default class ImportExport extends AdminForthPlugin {
       ok: false,
       error: 'Action is not allowed',
     };
+  }
+
+  /**
+   * Writes of an import: on behalf of the user who started it, with their permissions, row scope
+   * and the column rules of the create and edit forms, or as a system write when the import is
+   * started from code without a user.
+   */
+  private importWriter({ adminUser, extra, oldRecord }: { adminUser?: AdminUser; extra?: HttpExtra; oldRecord?: any }) {
+    const resource = this.adminforth.resource(this.resourceConfig.resourceId);
+    return adminUser
+      ? resource.asUser(adminUser, { meta: { requestBody: extra?.body }, extra, oldRecord })
+      : resource.asSystem({ extra, oldRecord });
+  }
+
+  /**
+   * Reads of an export and of the import check: as the user who started them, so they see exactly
+   * the rows of their list (permission, row scope, readable columns), or plain reads when started
+   * from code without a user.
+   */
+  public recordsReader(adminUser?: AdminUser) {
+    const resource = this.adminforth.resource(this.resourceConfig.resourceId);
+    return adminUser ? resource.asUser(adminUser) : resource;
   }
 
   async modifyResourceConfig(adminforth: IAdminForth, resourceConfig: AdminForthResource) {
@@ -413,7 +448,11 @@ export default class ImportExport extends AdminForthPlugin {
           if (!access.ok) {
             return { ok: false, error: access.error };
           }
-          return this.checkRecords(data);
+          try {
+            return await this.checkRecords(data, adminUser);
+          } catch (e) {
+            return { ok: false, error: (e as Error).message };
+          }
         }
       });
     }
@@ -563,29 +602,25 @@ export default class ImportExport extends AdminForthPlugin {
   /**
    * Approximates how much the full result set of the given query will weigh, without reading it.
    * A small probe of records is fetched and its serialized size is multiplied by the total count.
-   * Can be called programmatically, e.g. `this.estimateExportSize(filters, sort)`.
+   * Can be called programmatically, e.g. `this.estimateExportSize(filters, sort, adminUser)`.
    */
   public async estimateExportSize(
     filters: any,
-    sort: any
+    sort: any,
+    adminUser?: AdminUser,
   ): Promise<{ totalRows: number; serializedMiB: number; ramMiB: number }> {
-    const connector = this.adminforth.connectors[this.resourceConfig.dataSource];
-    const probe = await connector.getData({
-      resource: this.resourceConfig,
-      limit: SIZE_PROBE_ROWS,
-      offset: 0,
-      filters: connector.validateAndNormalizeInputFilters(filters),
-      sort,
-      getTotals: true,
-    });
+    const reader = this.recordsReader(adminUser);
+    const [totalRows, probe] = await Promise.all([
+      reader.count(filters),
+      reader.list(filters, SIZE_PROBE_ROWS, 0, sort),
+    ]);
 
-    const totalRows = probe.total ?? 0;
-    if (!totalRows || probe.data.length === 0) {
+    if (!totalRows || probe.length === 0) {
       return { totalRows, serializedMiB: 0, ramMiB: 0 };
     }
 
     const { fields } = this.getExportColumns();
-    const probeRows = probe.data.map((row) => {
+    const probeRows = probe.map((row) => {
       const exportedOnly: Record<string, any> = {};
       for (const field of fields) {
         exportedOnly[field] = row[field];
@@ -593,7 +628,7 @@ export default class ImportExport extends AdminForthPlugin {
       return exportedOnly;
     });
 
-    const bytesPerRow = Buffer.byteLength(JSON.stringify(probeRows), 'utf8') / probe.data.length;
+    const bytesPerRow = Buffer.byteLength(JSON.stringify(probeRows), 'utf8') / probe.length;
     const serializedMiB = (bytesPerRow * totalRows) / 1024 / 1024;
 
     return { totalRows, serializedMiB, ramMiB: serializedMiB * RAM_OVERHEAD_FACTOR };
@@ -614,32 +649,29 @@ export default class ImportExport extends AdminForthPlugin {
     exportedCount: number;
   } | { ok: false; error: string }> {
     const { adminUser, headers } = options;
-    const connector = this.adminforth.connectors[this.resourceConfig.dataSource];
 
-    const { serializedMiB } = await this.estimateExportSize(filters, sort);
-    console.log("Estimated size:", serializedMiB);
-    const limit = this.options.classicalUploadLimitMiB ?? DEFAULT_EXPORT_VIA_UPLOAD_BUFFER_SIZE_MB;
-    if (serializedMiB > limit) {
-      return { 
-        ok: false, 
-        error: 'Upload limit exceeded, please filter smaller amount of data for export or contact your administrator' 
-      };
+    let records: Record<string, any>[];
+    try {
+      const { serializedMiB } = await this.estimateExportSize(filters, sort, adminUser);
+      console.log("Estimated size:", serializedMiB);
+      const limit = this.options.classicalUploadLimitMiB ?? DEFAULT_EXPORT_VIA_UPLOAD_BUFFER_SIZE_MB;
+      if (serializedMiB > limit) {
+        return {
+          ok: false,
+          error: 'Upload limit exceeded, please filter smaller amount of data for export or contact your administrator'
+        };
+      }
+
+      records = await this.recordsReader(adminUser).list(filters, 1e6, 0, sort);
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
     }
-
-    const data = await connector.getData({
-      resource: this.resourceConfig,
-      limit: 1e6,
-      offset: 0,
-      filters: connector.validateAndNormalizeInputFilters(filters),
-      sort,
-      getTotals: true,
-    });
 
     // prepare data for PapaParse unparse
     const { columns, fields, columnsToForceQuote } = this.getExportColumns();
 
     const hooksResult = await this.runBeforeExportWriteHooks({
-      records: data.data,
+      records,
       columns,
       exportMode: 'classical',
       batchOffset: 0,
@@ -649,7 +681,7 @@ export default class ImportExport extends AdminForthPlugin {
       return { ok: false, error: hooksResult.error };
     }
 
-    const rows = data.data.map((row) => {
+    const rows = records.map((row) => {
       return columns.map((col) => {
         const value = row[col.name];
         if (col.type === AdminForthDataTypes.JSON || col.isArray?.enabled) {
@@ -702,6 +734,7 @@ export default class ImportExport extends AdminForthPlugin {
     let importedCount = 0;
     let updatedCount = 0;
     const limit = pLimit(100);
+    const connector = this.adminforth.connectors[resource.dataSource];
 
     await Promise.all(rows.map((row) => limit(async () => {
       try {
@@ -711,35 +744,24 @@ export default class ImportExport extends AdminForthPlugin {
           return;
         }
         const recordId = primaryKeyColumn ? row[primaryKeyColumn.name] as string : undefined;
-        if (primaryKeyColumn && recordId) {
-          const existingRecord = await this.adminforth.resource(this.resourceConfig.resourceId)
-            .list([Filters.EQ(primaryKeyColumn.name, recordId)]);
-
-          if (existingRecord.length > 0) {
-            const connector = this.adminforth.connectors[resource.dataSource];
-            const oldRecord = await connector.getRecordByPrimaryKey(resource, recordId);
-            if (!oldRecord) {
-              errors.push(`Record with ${primaryKeyColumn.name} ${recordId} not found`);
-              return;
-            }
-            const { error } = await this.adminforth.updateResourceRecord({
-              resource, updates: row, adminUser, oldRecord, recordId,
-              extra,
-            });
+        const oldRecord = recordId ? await connector.getRecordByPrimaryKey(resource, recordId) : null;
+        if (oldRecord) {
+          // only the cells the file changes are written, so exported columns hidden from the edit
+          // form, like the primary key or a creation date, pass when they come back unchanged
+          const updates = Object.fromEntries(
+            Object.entries(row).filter(([field, value]) => !importedValueIsUnchanged(value, oldRecord[field]))
+          );
+          if (Object.keys(updates).length > 0) {
+            const { error } = await this.importWriter({ adminUser, extra, oldRecord }).update(recordId, updates);
             if (error) {
               errors.push(error);
               return;
             }
-            updatedCount++;
-            return;
           }
+          updatedCount++;
+          return;
         }
-        const { error } = await this.adminforth.createResourceRecord({
-          resource: resource,
-          record: row,
-          adminUser: adminUser,
-          extra,
-        });
+        const { error } = await this.importWriter({ adminUser, extra }).create(this.cellsOfNewRecord(row));
         if (error) {
           errors.push(error);
           return;
@@ -767,7 +789,6 @@ export default class ImportExport extends AdminForthPlugin {
   ): Promise<{ ok: boolean; importedCount?: number; errors: string[] }> {
     const { adminUser, headers, extra } = options;
     const columns = this.getColumnNames(data);
-    const resource = this.adminforth.config.resources.find(r => r.resourceId === this.resourceConfig.resourceId);
     const { errors, resourceColumns } = this.validateColumns(columns);
     if (errors.length > 0) {
       return { ok: false, errors };
@@ -798,12 +819,7 @@ export default class ImportExport extends AdminForthPlugin {
             return;
           }
         }
-        const { error } = await this.adminforth.createResourceRecord({
-          resource: resource,
-          record: row,
-          adminUser: adminUser,
-          extra,
-        });
+        const { error } = await this.importWriter({ adminUser, extra }).create(this.cellsOfNewRecord(row));
         if (error) {
           errors.push(error);
           return;
@@ -819,9 +835,9 @@ export default class ImportExport extends AdminForthPlugin {
 
   /**
    * Check how many of the given records already exist (matched by primary key).
-   * Can be called programmatically, e.g. `this.checkRecords(data)`.
+   * Can be called programmatically, e.g. `this.checkRecords(data, adminUser)`.
    */
-  public async checkRecords(data: Record<string, unknown[]>): Promise<{
+  public async checkRecords(data: Record<string, unknown[]>, adminUser?: AdminUser): Promise<{
     ok: true;
     total: number;
     existingCount: number;
@@ -839,20 +855,23 @@ export default class ImportExport extends AdminForthPlugin {
       return { ok: true, total: rows.length, existingCount: 0, newCount: rows.length };
     }
 
-    const existingRecords = await this.adminforth
-      .resource(this.resourceConfig.resourceId)
-      .list([{
-        field: primaryKeyColumn.name,
-        operator: AdminForthFilterOperators.IN,
-        value: primaryKeys,
-      }]);
+    const existingCount = await this.recordsReader(adminUser).count(Filters.IN(primaryKeyColumn.name, primaryKeys));
 
     return {
       ok: true,
       total: rows.length,
-      existingCount: existingRecords.length,
-      newCount: rows.length - existingRecords.length,
+      existingCount,
+      newCount: rows.length - existingCount,
     };
+  }
+
+  /**
+   * An empty cell of a new record means the record has no value there, so it is left out: the
+   * column gets its default, and an empty column hidden from the create form does not fail the
+   * column rules of the form.
+   */
+  private cellsOfNewRecord(row: Record<string, unknown>): Record<string, unknown> {
+    return Object.fromEntries(Object.entries(row).filter(([, value]) => !isEmptyCell(value)));
   }
 
   private getColumnNames(data: Record<string, unknown[]>): string[] {
