@@ -126,7 +126,7 @@ function getJobsResourceMeta(backgroundJobsPlugin: BackgroundJobsPlugin): { reso
   const resourceConfig = backgroundJobsPlugin.resourceConfig;
   return {
     resourceId: resourceConfig.resourceId,
-    pkColumn: resourceConfig.columns.find((col) => col.primaryKey).name,
+    pkColumn: resourceConfig.columns.find((col) => col.primaryKey)!.name,
   };
 }
 
@@ -149,12 +149,12 @@ async function resolveJobAdminUser(plugin: ImportExportPlugin, jobId: string): P
     if (!pk || !usersResource) {
       return undefined;
     }
-    const usersPkColumn = usersResource.columns.find((col) => col.primaryKey).name;
+    const usersPkColumn = usersResource.columns.find((col) => col.primaryKey)!.name;
     const dbUser = await plugin.adminforth.resource(usersResource.resourceId).get(Filters.EQ(usersPkColumn, pk));
     if (!dbUser) {
       return undefined;
     }
-    return { pk, username: dbUser[authConfig.usernameField], dbUser };
+    return { pk, username: dbUser[authConfig!.usernameField], dbUser };
   } catch (e) {
     console.error(`ImportExport: failed to resolve user who started export job ${jobId}:`, e);
     return undefined;
@@ -219,7 +219,7 @@ export async function runExportCsvJob(
 ): Promise<void> {
   const backgroundJobsPlugin = getBackgroundJobsPlugin(plugin);
   const { filters, sort, fileKey, fileFormat } = (await getState()) as TaskState;
-  const { storageAdapter, bufferSizeMb, readChunkSize } = plugin.options.exportViaUpload;
+  const { storageAdapter, bufferSizeMb, readChunkSize } = plugin.options.exportViaUpload!;
   const chunkSize = readChunkSize ?? DEFAULT_READ_CHUNK_SIZE;
 
   // the row-scoping hooks add their conditions to the filters of a read, so every chunk gets a copy
@@ -295,8 +295,8 @@ export async function runExportCsvJob(
       }
 
       if (data.length) {
-        if (xlsxWorksheet) {
-          data.forEach((row) => {
+        if (xlsxWorkbook && xlsxWorksheet) {
+          for (const row of data) {
             if (xlsxDataRowsInSheet === MAX_XLSX_DATA_ROWS_PER_SHEET) {
               xlsxWorksheet.commit();
               xlsxSheetNumber++;
@@ -306,7 +306,7 @@ export async function runExportCsvJob(
             }
             xlsxWorksheet.addRow(serializeXlsxRow(columns, row)).commit();
             xlsxDataRowsInSheet++;
-          });
+          }
           if (xlsxStreamError) {
             throw xlsxStreamError;
           }
@@ -441,7 +441,7 @@ export async function getExportDownloadUrl(
     return { ok: false, error: 'Export is not finished yet' };
   }
 
-  const { storageAdapter } = plugin.options.exportViaUpload;
+  const { storageAdapter } = plugin.options.exportViaUpload!;
   const url = await storageAdapter.getDownloadUrl(state.fileKey, DOWNLOAD_URL_EXPIRES_IN_SECONDS);
 
   return { ok: true, url, fileName: state.fileName };

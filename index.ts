@@ -57,9 +57,6 @@ function importedValueIsUnchanged(imported: unknown, stored: unknown): boolean {
 
 export default class ImportExport extends AdminForthPlugin {
   options: PluginOptions;
-  emailField: AdminForthResourceColumn;
-  authResourceId: string;
-  adminforth: IAdminForth;
   auditLogPlugin: Record<string, any> | undefined;
   backgroundJobsPlugin: any;
  
@@ -577,7 +574,7 @@ export default class ImportExport extends AdminForthPlugin {
       batchOffset: number;
       adminUser?: AdminUser;
     }
-  ): Promise<{ ok: boolean; error?: string }> {
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
     const hooks = this.options.hooks?.export?.beforeWrite;
     const hookList: BeforeExportWriteFunction[] = Array.isArray(hooks) ? hooks : (hooks ? [hooks] : []);
     if (!hookList.length) {
@@ -719,7 +716,7 @@ export default class ImportExport extends AdminForthPlugin {
     const { adminUser, headers, extra } = options;
     const columns = this.getColumnNames(data);
     const { errors, resourceColumns } = this.validateColumns(columns);
-    const resource = this.adminforth.config.resources.find(r => r.resourceId === this.resourceConfig.resourceId);
+    const resource = this.adminforth.config.resources.find(r => r.resourceId === this.resourceConfig.resourceId)!;
 
     if (errors.length > 0) {
       return { ok: false, errors };
@@ -767,7 +764,7 @@ export default class ImportExport extends AdminForthPlugin {
           return;
         }
         importedCount++;
-      } catch (e) {
+      } catch (e: any) {
         errors.push(e.message);
       }
     })));
@@ -825,7 +822,7 @@ export default class ImportExport extends AdminForthPlugin {
           return;
         }
         importedCount++;
-      } catch (e) {
+      } catch (e: any) {
         errors.push(e.message);
       }
     })));
@@ -855,7 +852,7 @@ export default class ImportExport extends AdminForthPlugin {
       return { ok: true, total: rows.length, existingCount: 0, newCount: rows.length };
     }
 
-    const existingCount = await this.recordsReader(adminUser).count(Filters.IN(primaryKeyColumn.name, primaryKeys));
+    const existingCount = await this.recordsReader(adminUser).count(Filters.IN(primaryKeyColumn!.name, primaryKeys));
 
     return {
       ok: true,
@@ -949,7 +946,7 @@ export default class ImportExport extends AdminForthPlugin {
       (resourceCol.type === AdminForthDataTypes.INTEGER
         || resourceCol.type === AdminForthDataTypes.FLOAT)
     ) {
-      return +val;
+      return +(val as string);
     }
 
     if (resourceCol.type === AdminForthDataTypes.BOOLEAN) {
